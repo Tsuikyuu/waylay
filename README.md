@@ -18,6 +18,12 @@
 
 ---
 
+> **Fork 说明**：本仓库 Fork 自 [Micuks/waylay-qq-bridge](https://github.com/Micuks/waylay-qq-bridge)（原作者：[Micuks](https://github.com/Micuks)），遵循 [Apache License 2.0](LICENSE) 开源协议。
+> 相较于上游仓库，本分支主要进行了以下调整：
+> - 移除了 OneBot v11 实现，专注于 **Milky 协议** 的标准对齐与富媒体代理下载支持；
+> - 重新实现了黑白极简风格的 **WebUI 控制台**（支持扫码与快速登录、实时运行监控、SSE 日志流跟踪、Milky API 在线调试与事件监听）；
+> - 调整了容器构建流程与 Linux QQ 版本打包方式。
+
 ## 简介
 
 Waylay 是一个轻量级的 NTQQ 无头桥接工具，使用纯 JavaScript 编写，内置 Milky 协议支持。它直接加载 QQ 的 `wrapper.node` 原生模块与 QQ 内核通信，适合追求简洁部署和低资源占用的场景。
@@ -294,15 +300,17 @@ Authorization: Bearer your_token
 
 ## 致谢
 
-Waylay 的诞生离不开以下项目的启发和贡献：
+本项目基于并派生自以下优秀开源工作，谨致谢意：
 
+- [waylay-qq-bridge](https://github.com/Micuks/waylay-qq-bridge) — 本仓库的上游原项目（作者：[Micuks](https://github.com/Micuks)）
 - [NapCatQQ](https://github.com/NapNeko/NapCatQQ) — 功能全面的 NTQQ 框架
 - [LLOneBot](https://github.com/LLOneBot/LLOneBot) — 多协议适配的 QQ Bot 方案
 - [Lagrange.Core](https://github.com/LagrangeDev/Lagrange.Core) — 优雅的 C# 协议实现
-- [OneBot v11](https://github.com/botuniverse/onebot-11) — 统一的 Bot 协议标准
+- [Milky](https://milky.ntqqrev.org/) — 现代化的 QQ 机器人应用接口标准
 
 ## 许可证
 
-[Apache License 2.0](LICENSE) — 自由使用，需保留版权声明和出处。
+本项目遵循 [Apache License 2.0](LICENSE) 开源许可证发布，完整归属与修改说明见 [NOTICE](NOTICE) 文件 — 自由使用与分发时请保留原作者版权声明、许可证副本及变更说明。
 
-Copyright 2026 Micuks
+- Original Work Copyright 2026 Micuks ([Micuks/waylay-qq-bridge](https://github.com/Micuks/waylay-qq-bridge))
+- Modifications Copyright 2026 Tsuikyuu

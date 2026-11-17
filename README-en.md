@@ -18,6 +18,12 @@
 
 ---
 
+> **Fork Notice**: This repository is a fork of [Micuks/waylay-qq-bridge](https://github.com/Micuks/waylay-qq-bridge) (originally created by [Micuks](https://github.com/Micuks)), distributed under the [Apache License 2.0](LICENSE).
+> Key changes in this fork compared to upstream:
+> - Removed the OneBot v11 implementation to focus exclusively on **Milky v1 specification** compliance and rich-media proxy downloading;
+> - Rebuilt a minimalist monochrome **WebUI Console** featuring QR/quick login, runtime monitoring, live SSE log streaming, and an interactive Milky API & event debugger;
+> - Updated Docker build packaging for newer Linux NTQQ releases.
+
 ## About
 
 Waylay is a lightweight headless NTQQ bridge written in plain JavaScript with built-in Milky protocol support. It loads QQ's `wrapper.node` native module directly to communicate with the QQ kernel — ideal for minimal deployments with low resource requirements.
@@ -188,15 +194,17 @@ Waylay supports the Milky protocol over HTTP API + WebSocket/SSE/Webhook events.
 
 ## Acknowledgements
 
-Waylay is inspired by and grateful to the following projects:
+This fork builds upon the work of the following open-source projects:
 
+- [waylay-qq-bridge](https://github.com/Micuks/waylay-qq-bridge) — Upstream project by [Micuks](https://github.com/Micuks)
 - [NapCatQQ](https://github.com/NapNeko/NapCatQQ) — Feature-rich NTQQ framework
 - [LLOneBot](https://github.com/LLOneBot/LLOneBot) — Multi-protocol QQ Bot solution
 - [Lagrange.Core](https://github.com/LagrangeDev/Lagrange.Core) — Elegant C# protocol implementation
-- [OneBot v11](https://github.com/botuniverse/onebot-11) — Unified Bot protocol standard
+- [Milky](https://milky.ntqqrev.org/) — Modern QQ Bot protocol specification
 
 ## License
 
-[Apache License 2.0](LICENSE) — Free to use, attribution required.
+Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution and summary of modifications.
 
-Copyright 2026 Micuks
+- Original Work Copyright 2026 Micuks ([Micuks/waylay-qq-bridge](https://github.com/Micuks/waylay-qq-bridge))
+- Modifications Copyright 2026 Tsuikyuu

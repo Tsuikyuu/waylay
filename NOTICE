@@ -1,0 +1,13 @@
+Waylay (Milky Edition)
+Modifications Copyright 2026 Tsuikyuu
+
+This product is a derivative work forked from waylay-qq-bridge:
+  https://github.com/Micuks/waylay-qq-bridge
+  Copyright 2026 Micuks
+  Licensed under the Apache License, Version 2.0.
+
+Summary of major modifications in this fork:
+  1. Removed the OneBot v11 protocol adapter to focus exclusively on the Milky protocol.
+  2. Aligned Milky events, segments, and API payloads with the official Milky v1 specification, and added capability-token media proxy downloading.
+  3. Replaced the legacy static web pages with a newly implemented monochrome WebUI console featuring QR/quick login, runtime metrics, live SSE log streaming, and an interactive Milky API debugger.
+  4. Updated Docker packaging and bundled Linux NTQQ version configuration.
