@@ -1,91 +1,123 @@
 "use strict";
 
 const { ntToMilky } = require("./message");
+const { toIdNum, toIdKey, ensureStr } = require("./id");
 
 /**
- * Translates NTQQ kernel listener events into Milky protocol events.
+ * 将 NTQQ 内核监听器事件转换为符合 Milky 协议标准的事件对象
  *
- * Milky event envelope: { event_type, time, self_id, data }
+ * Milky 事件信封格式：{ time, self_id, event_type, data }
  */
 class MilkyEventTranslator {
-  constructor(bridge) {
+  constructor(bridge, mediaUrlBuilder) {
     this.bridge = bridge;
-    // message_seq counter (int64 range, exposed as number)
-    this._seqCounter = 0;
-    this._msgIdToSeq = new Map(); // NTQQ msgId -> seq
-    this._seqToMsgId = new Map(); // seq -> NTQQ msgId
-    this._msgCache = new Map(); // seq -> msg data
-    // UIN <-> UID mapping
+    this.mediaUrlBuilder = typeof mediaUrlBuilder === "function" ? mediaUrlBuilder : null;
+    // 消息序列号计数器：以纪元偏移初始化为 31 位正整数，避免容器重启后与客户端持久化历史碰撞
+    const epochOffset = Math.floor((Date.now() - 1760000000000) / 250);
+    this._seqCounter = epochOffset > 1000 ? (epochOffset & 0x3fffffff) : 1000;
+    this._msgIdToSeq = new Map(); // NTQQ msgId -> seq (number)
+    this._seqToMsgId = new Map(); // seq (number) -> NTQQ msgId
+    this._msgCache = new Map(); // seq -> Milky IncomingMessage
+    this._msgNtMeta = new Map(); // seq -> { ntMsgSeq, senderUinStr }
+
+    // UIN <-> UID 双向映射
     this._uinToUid = new Map();
     this._uidToUin = new Map();
-    // Group member cache
-    this._groupMembers = new Map(); // groupCode -> Map<uin, { uid, nick, card }>
-    // Group list cache
-    this._groupList = new Map(); // groupCode -> group info
-    // Buddy list cache
-    this._buddyList = new Map(); // uin -> { uid, nick, remark }
-    this._knownBuddyUins = new Set();
-    this._buddyListInitialized = false;
+
+    // 群成员缓存：groupCodeStr -> Map<uinStr, { uid, nick, card, role }>
+    this._groupMembers = new Map();
+    // 群列表缓存：groupCodeStr -> NTQQ group info
+    this._groupList = new Map();
+    // 好友列表缓存：uinStr -> { uid, nick, remark, categoryId, categoryName }
+    this._buddyList = new Map();
+
+    // 待处理请求缓存
+    this._groupNotifyCache = new Map(); // seqStr -> { groupCode, seq, type }
+    this._friendReqCache = new Map(); // initiatorUidOrUin -> rawId
   }
 
   get selfId() {
-    return String(this.bridge.selfInfo.uin || "0");
+    return toIdNum(this.bridge.selfInfo.uin);
   }
 
   createSeq(msgId) {
-    if (this._msgIdToSeq.has(msgId)) return this._msgIdToSeq.get(msgId);
+    const key = ensureStr(msgId, "");
+    const validKey = key !== "" && key !== "0" ? key : "";
+    if (validKey !== "" && this._msgIdToSeq.has(validKey)) {
+      return this._msgIdToSeq.get(validKey);
+    }
     this._seqCounter++;
     const seq = this._seqCounter;
-    this._msgIdToSeq.set(msgId, seq);
-    this._seqToMsgId.set(seq, msgId);
+    if (validKey !== "") {
+      this._msgIdToSeq.set(validKey, seq);
+      this._seqToMsgId.set(seq, validKey);
+    }
     return seq;
   }
 
   resolveSeq(seq) {
-    return this._seqToMsgId.get(Number(seq));
+    return this._seqToMsgId.get(toIdNum(seq));
   }
 
-  cacheMsg(seq, data) {
-    this._msgCache.set(seq, data);
+  cacheMsg(seq, incomingMessage, ntMeta) {
+    this._msgCache.set(seq, incomingMessage);
+    if (ntMeta) {
+      this._msgNtMeta.set(seq, ntMeta);
+    }
     if (this._msgCache.size > 5000) {
       const oldest = this._msgCache.keys().next().value;
       this._msgCache.delete(oldest);
+      this._msgNtMeta.delete(oldest);
     }
   }
 
   getCachedMsg(seq) {
-    return this._msgCache.get(Number(seq));
+    return this._msgCache.get(toIdNum(seq));
+  }
+
+  getCachedNtMeta(seq) {
+    return this._msgNtMeta.get(toIdNum(seq));
   }
 
   recordUinUid(uin, uid) {
-    if (uin && uid && uid.startsWith("u_")) {
-      this._uinToUid.set(String(uin), uid);
-      this._uidToUin.set(uid, String(uin));
+    const uinStr = toIdKey(uin);
+    if (uinStr && typeof uid === "string" && uid.startsWith("u_")) {
+      this._uinToUid.set(uinStr, uid);
+      this._uidToUin.set(uid, uinStr);
     }
   }
 
   getUidByUin(uin) {
-    return this._uinToUid.get(String(uin));
+    return this._uinToUid.get(toIdKey(uin));
   }
 
   getUinByUid(uid) {
     return this._uidToUin.get(uid);
   }
 
-  recordGroupMember(groupId, uin, uid, nick, card) {
-    if (!groupId || !uin) return;
-    const gid = String(groupId);
-    if (!this._groupMembers.has(gid)) this._groupMembers.set(gid, new Map());
-    const existing = this._groupMembers.get(gid).get(String(uin)) || {};
-    this._groupMembers.get(gid).set(String(uin), {
+  recordGroupMember(groupId, uin, uid, nick, card, roleCode) {
+    const gid = toIdKey(groupId);
+    const uinStr = toIdKey(uin);
+    if (!gid || !uinStr) return;
+    if (!this._groupMembers.has(gid)) {
+      this._groupMembers.set(gid, new Map());
+    }
+    const existing = this._groupMembers.get(gid).get(uinStr) || {};
+    let role = existing.role || "member";
+    if (roleCode === 4) role = "owner";
+    else if (roleCode === 3) role = "admin";
+    else if (roleCode === 2) role = "member";
+
+    this._groupMembers.get(gid).set(uinStr, {
       uid: uid || existing.uid || "",
       nick: nick || existing.nick || "",
       card: card || existing.card || "",
+      role,
     });
   }
 
   getGroupMember(groupId, uin) {
-    return this._groupMembers.get(String(groupId))?.get(String(uin));
+    return this._groupMembers.get(toIdKey(groupId))?.get(toIdKey(uin));
   }
 
   getGroupList() {
@@ -96,11 +128,59 @@ class MilkyEventTranslator {
     return this._buddyList;
   }
 
+  // 构造标准 Milky FriendEntity
+  buildFriendEntity(uin, fallbackNick) {
+    const uinStr = toIdKey(uin);
+    const b = this._buddyList.get(uinStr);
+    return {
+      user_id: toIdNum(uinStr),
+      nickname: (b && b.nick) || ensureStr(fallbackNick, ""),
+      sex: "unknown",
+      qid: "",
+      remark: (b && b.remark) || "",
+      category: {
+        category_id: (b && b.categoryId) || 0,
+        category_name: (b && b.categoryName) || "默认分组",
+      },
+    };
+  }
+
+  // 构造标准 Milky GroupEntity
+  buildGroupEntity(groupId, fallbackName) {
+    const gidStr = toIdKey(groupId);
+    const g = this._groupList.get(gidStr);
+    return {
+      group_id: toIdNum(gidStr),
+      group_name: (g && g.groupName) || ensureStr(fallbackName, ""),
+      member_count: g ? toIdNum(g.memberCount) : 0,
+      max_member_count: g ? toIdNum(g.maxMember) : 0,
+    };
+  }
+
+  // 构造标准 Milky GroupMemberEntity
+  buildGroupMemberEntity(groupId, uin, fallbackNick, fallbackCard, lastSentTime) {
+    const gidStr = toIdKey(groupId);
+    const uinStr = toIdKey(uin);
+    const m = this.getGroupMember(gidStr, uinStr);
+    return {
+      group_id: toIdNum(gidStr),
+      user_id: toIdNum(uinStr),
+      nickname: ensureStr(fallbackNick, "") || (m && m.nick) || "",
+      card: ensureStr(fallbackCard, "") || (m && m.card) || "",
+      title: "",
+      sex: "unknown",
+      level: 0,
+      role: (m && m.role) || "member",
+      join_time: 0,
+      last_sent_time: typeof lastSentTime === "number" ? lastSentTime : 0,
+    };
+  }
+
   _makeEvent(eventType, data) {
     return {
-      event_type: eventType,
       time: Math.floor(Date.now() / 1000),
       self_id: this.selfId,
+      event_type: eventType,
       data,
     };
   }
@@ -118,16 +198,20 @@ class MilkyEventTranslator {
       }
       return [];
     } catch (e) {
-      console.error(`[milky-events] Error translating ${listenerName}.${eventName}:`, e.message);
+      console.error(`[milky-events] 转换事件 ${listenerName}.${eventName} 出错:`, e.message);
       return [];
     }
   }
 
-  // ---- Message events ----
+  // ---- 消息事件转换 ----
 
   _translateMsgEvent(eventName, data) {
     if (eventName === "onRecvMsg" || eventName === "onRecvActiveMsg") {
       return this._onRecvMsg(data);
+    }
+    if (eventName === "onAddSendMsg") {
+      this._onAddSendMsg(data);
+      return [];
     }
     if (eventName === "onMsgInfoListUpdate") {
       return this._onMsgInfoListUpdate(data);
@@ -135,39 +219,57 @@ class MilkyEventTranslator {
     return [];
   }
 
+  _onAddSendMsg(data) {
+    const msg = Array.isArray(data) ? data[0] : data;
+    if (!msg || !msg.msgId || msg.msgId === "0") return;
+    const seq = this.createSeq(msg.msgId);
+    this._msgNtMeta.set(seq, {
+      ntMsgSeq: ensureStr(msg.msgSeq, "0"),
+      senderUinStr: toIdKey(msg.senderUin || this.bridge.selfInfo.uin || "0"),
+    });
+  }
+
   _onRecvMsg(data) {
     const events = [];
     const msgList = Array.isArray(data) ? data : data?.msgList || [data];
 
-    for (const msg of msgList) {
+    for (let idx = 0; idx < msgList.length; idx++) {
+      const msg = msgList[idx];
       if (!msg || !msg.msgId) continue;
 
       if (msg.senderUin && msg.senderUid) {
         this.recordUinUid(msg.senderUin, msg.senderUid);
       }
       if (msg.chatType === 2 && msg.senderUin && msg.peerUin) {
-        this.recordGroupMember(msg.peerUin, msg.senderUin, msg.senderUid,
-          msg.sendNickName, msg.senderMemberName || msg.sendMemberName);
+        this.recordGroupMember(
+          msg.peerUin,
+          msg.senderUin,
+          msg.senderUid,
+          msg.sendNickName,
+          msg.senderMemberName || msg.sendMemberName,
+          msg.sendMemberRole
+        );
       }
       if (msg.chatType === 1 && msg.peerUid && msg.peerUin) {
         this.recordUinUid(msg.peerUin, msg.peerUid);
       }
 
-      // Skip gray tip messages — handle them separately
+      // 灰条提示消息单独转换为群管/戳一戳通知事件
       if (msg.msgType === 5) {
         events.push(...this._handleGrayTip(msg));
         continue;
       }
 
       const seq = this.createSeq(msg.msgId);
-      const segments = ntToMilky(msg.elements, msg);
+      const segments = ntToMilky(msg.elements, msg, (uid) => this.getUinByUid(uid), this.mediaUrlBuilder);
 
-      // Resolve reply segment message_seq
-      for (const seg of segments) {
+      // 回填引用回复段的 message_seq
+      for (let s = 0; s < segments.length; s++) {
+        const seg = segments[s];
         if (seg.type === "reply") {
-          const replyMsgId = msg.elements?.find(e => e.replyElement)?.replyElement;
-          if (replyMsgId) {
-            const refId = replyMsgId.sourceMsgIdInRecords || replyMsgId.replayMsgId;
+          const replyEl = msg.elements?.find((e) => e.replyElement)?.replyElement;
+          if (replyEl) {
+            const refId = ensureStr(replyEl.sourceMsgIdInRecords || replyEl.replayMsgId, "");
             if (refId && this._msgIdToSeq.has(refId)) {
               seg.data.message_seq = this._msgIdToSeq.get(refId);
             }
@@ -175,62 +277,87 @@ class MilkyEventTranslator {
         }
       }
 
-      let messageScene, peerId;
-      if (msg.chatType === 2) {
-        messageScene = "group";
-        peerId = String(msg.peerUin);
-      } else if (msg.chatType === 1) {
-        messageScene = "friend";
-        peerId = String(msg.senderUin);
-      } else if (msg.chatType === 100) {
-        messageScene = "temp";
-        peerId = String(msg.senderUin);
-      } else {
-        continue;
+      const msgTime = toIdNum(msg.msgTime) || Math.floor(Date.now() / 1000);
+      const senderId = toIdNum(msg.senderUin);
+
+      // 若存在有效消息段则构造标准 Milky message_receive 事件（核心字段为 segments 与 sender_id）
+      if (segments.length > 0) {
+        let eventData = null;
+        if (msg.chatType === 2) {
+          const groupIdNum = toIdNum(msg.peerUin);
+          eventData = {
+            message_scene: "group",
+            peer_id: groupIdNum,
+            message_seq: seq,
+            sender_id: senderId,
+            time: msgTime,
+            segments,
+            group: this.buildGroupEntity(msg.peerUin, msg.peerName),
+            group_member: this.buildGroupMemberEntity(
+              msg.peerUin,
+              msg.senderUin,
+              msg.sendNickName,
+              msg.senderMemberName || msg.sendMemberName,
+              msgTime
+            ),
+          };
+        } else if (msg.chatType === 1) {
+          const peerUin = msg.peerUin || msg.senderUin;
+          eventData = {
+            message_scene: "friend",
+            peer_id: toIdNum(peerUin),
+            message_seq: seq,
+            sender_id: senderId,
+            time: msgTime,
+            segments,
+            friend: this.buildFriendEntity(peerUin, msg.sendNickName),
+          };
+        } else if (msg.chatType === 100) {
+          eventData = {
+            message_scene: "temp",
+            peer_id: toIdNum(msg.peerUin || msg.senderUin),
+            message_seq: seq,
+            sender_id: senderId,
+            time: msgTime,
+            segments,
+          };
+        }
+
+        if (eventData) {
+          this.cacheMsg(seq, eventData, {
+            ntMsgSeq: ensureStr(msg.msgSeq, "0"),
+            senderUinStr: toIdKey(msg.senderUin || "0"),
+          });
+          events.push(this._makeEvent("message_receive", eventData));
+        }
       }
 
-      const eventData = {
-        message_seq: seq,
-        message_scene: messageScene,
-        peer_id: peerId,
-        sender: {
-          user_id: String(msg.senderUin || "0"),
-          nickname: msg.sendNickName || "",
-          card: msg.senderMemberName || msg.sendMemberName || "",
-        },
-        message: segments,
-        time: parseInt(msg.msgTime) || Math.floor(Date.now() / 1000),
-      };
-
-      // Cache for later reference
-      eventData._ntMsgSeq = msg.msgSeq || "0";
-      this.cacheMsg(seq, eventData);
-      events.push(this._makeEvent("message_receive", eventData));
-
-      // Emit group_file_upload for file elements in group
+      // 群文件上传附加事件
       if (msg.chatType === 2) {
         for (const el of msg.elements || []) {
           if (el.fileElement) {
             events.push(this._makeEvent("group_file_upload", {
-              group_id: String(msg.peerUin),
-              user_id: String(msg.senderUin),
+              group_id: toIdNum(msg.peerUin),
+              user_id: senderId,
               file_id: el.fileElement.fileUuid || "",
               file_name: el.fileElement.fileName || "",
-              file_size: Number(el.fileElement.fileSize) || 0,
+              file_size: toIdNum(el.fileElement.fileSize),
             }));
           }
         }
       }
 
-      // Emit friend_file_upload for file elements in C2C
+      // 私聊文件上传附加事件
       if (msg.chatType === 1) {
         for (const el of msg.elements || []) {
           if (el.fileElement) {
             events.push(this._makeEvent("friend_file_upload", {
-              user_id: String(msg.senderUin),
+              user_id: senderId,
               file_id: el.fileElement.fileUuid || "",
               file_name: el.fileElement.fileName || "",
-              file_size: Number(el.fileElement.fileSize) || 0,
+              file_size: toIdNum(el.fileElement.fileSize),
+              file_hash: el.fileElement.fileMd5 || "",
+              is_self: senderId === this.selfId,
             }));
           }
         }
@@ -243,25 +370,29 @@ class MilkyEventTranslator {
     const events = [];
     const msgList = Array.isArray(data) ? data : data?.msgList || [data];
 
-    for (const msg of msgList) {
+    for (let i = 0; i < msgList.length; i++) {
+      const msg = msgList[i];
       if (!msg || !msg.recallTime || msg.recallTime === "0") continue;
 
-      const seq = this._msgIdToSeq.get(msg.msgId) || 0;
+      const seq = this._msgIdToSeq.get(ensureStr(msg.msgId, "")) || 0;
+      const senderId = toIdNum(msg.senderUin);
       if (msg.chatType === 2) {
         events.push(this._makeEvent("message_recall", {
-          message_seq: seq,
           message_scene: "group",
-          peer_id: String(msg.peerUin),
-          operator_id: String(msg.senderUin || "0"),
-          time: Math.floor(Date.now() / 1000),
+          peer_id: toIdNum(msg.peerUin),
+          message_seq: seq,
+          sender_id: senderId,
+          operator_id: senderId,
+          display_suffix: "",
         }));
       } else if (msg.chatType === 1) {
         events.push(this._makeEvent("message_recall", {
-          message_seq: seq,
           message_scene: "friend",
-          peer_id: String(msg.senderUin || msg.peerUin),
-          operator_id: String(msg.senderUin || "0"),
-          time: Math.floor(Date.now() / 1000),
+          peer_id: toIdNum(msg.peerUin || msg.senderUin),
+          message_seq: seq,
+          sender_id: senderId,
+          operator_id: senderId,
+          display_suffix: "",
         }));
       }
     }
@@ -272,82 +403,93 @@ class MilkyEventTranslator {
     const events = [];
     if (!msg.elements) return events;
 
-    for (const el of msg.elements) {
+    for (let i = 0; i < msg.elements.length; i++) {
+      const el = msg.elements[i];
       if (!el.grayTipElement) continue;
       const tip = el.grayTipElement;
-      const time = parseInt(msg.msgTime) || Math.floor(Date.now() / 1000);
 
       if (tip.subElementType === 4 && tip.groupElement) {
         const ge = tip.groupElement;
-        const groupId = String(msg.peerUin);
+        const groupId = toIdNum(msg.peerUin);
 
         if (ge.type === 1) {
           events.push(this._makeEvent("group_member_increase", {
             group_id: groupId,
-            user_id: String(ge.memberUin || "0"),
-            operator_id: String(ge.adminUin || "0"),
-            time,
+            user_id: toIdNum(ge.memberUin),
+            operator_id: toIdNum(ge.adminUin),
+            invitor_id: 0,
           }));
         }
 
         if (ge.type === 3) {
           events.push(this._makeEvent("group_member_decrease", {
             group_id: groupId,
-            user_id: String(ge.memberUin || "0"),
-            operator_id: String(ge.adminUin || "0"),
-            time,
+            user_id: toIdNum(ge.memberUin),
+            operator_id: toIdNum(ge.adminUin),
           }));
         }
 
         if (ge.type === 8) {
-          const duration = ge.shutUp?.duration || 0;
-          if (duration > 0) {
-            events.push(this._makeEvent("group_mute", {
-              group_id: groupId,
-              user_id: String(ge.memberUin || ge.shutUp?.member?.uin || "0"),
-              operator_id: String(ge.adminUin || ge.shutUp?.admin?.uin || "0"),
-              duration,
-            }));
-          } else {
-            events.push(this._makeEvent("group_mute", {
-              group_id: groupId,
-              user_id: String(ge.memberUin || ge.shutUp?.member?.uin || "0"),
-              operator_id: String(ge.adminUin || ge.shutUp?.admin?.uin || "0"),
-              duration: 0,
-            }));
-          }
+          const duration = toIdNum(ge.shutUp?.duration);
+          events.push(this._makeEvent("group_mute", {
+            group_id: groupId,
+            user_id: toIdNum(ge.memberUin || ge.shutUp?.member?.uin),
+            operator_id: toIdNum(ge.adminUin || ge.shutUp?.admin?.uin),
+            duration,
+          }));
         }
 
         if (ge.type === 5 || ge.type === 13) {
           events.push(this._makeEvent("group_admin_change", {
             group_id: groupId,
-            user_id: String(ge.memberUin || "0"),
-            is_admin: ge.type === 5,
+            user_id: toIdNum(ge.memberUin),
+            operator_id: toIdNum(ge.adminUin),
+            is_set: ge.type === 5,
           }));
         }
       }
 
-      // JSON gray tips (poke/nudge)
+      // JSON 灰条（戳一戳通知）
       if (tip.subElementType === 17 && tip.jsonGrayTipElement) {
         const json = tip.jsonGrayTipElement;
-        const busiId = String(json.busiId);
+        const busiId = toIdKey(json.busiId);
 
         if (busiId === "1061") {
           try {
-            const items = JSON.parse(json.jsonStr);
-            const actionUser = items?.find?.(i => i.uid)?.uid;
-            const targetUser = items?.find?.((i, idx) => idx > 0 && i.uid)?.uid;
-            if (actionUser) {
+            const parsed = JSON.parse(json.jsonStr);
+            const items = Array.isArray(parsed) ? parsed : (parsed?.items || []);
+            const uinNodes = items.filter((it) => it && (it.uin || it.uid));
+            const resolveNodeUin = (node) => {
+              if (!node) return 0;
+              if (node.uin) return toIdNum(node.uin);
+              if (node.uid) {
+                const mapped = this.getUinByUid(node.uid);
+                return mapped ? toIdNum(mapped) : toIdNum(node.uid);
+              }
+              return 0;
+            };
+            const senderId = resolveNodeUin(uinNodes[0]);
+            const receiverId = uinNodes[1] ? resolveNodeUin(uinNodes[1]) : this.selfId;
+
+            if (senderId) {
               if (msg.chatType === 2) {
                 events.push(this._makeEvent("group_nudge", {
-                  group_id: String(msg.peerUin),
-                  user_id: String(actionUser || "0"),
-                  target_id: String(targetUser || this.selfId),
+                  group_id: toIdNum(msg.peerUin),
+                  sender_id: senderId,
+                  receiver_id: receiverId,
+                  display_action: "戳了戳",
+                  display_suffix: "",
+                  display_action_img_url: "",
                 }));
               } else {
+                const otherId = senderId === this.selfId ? receiverId : senderId;
                 events.push(this._makeEvent("friend_nudge", {
-                  user_id: String(actionUser || "0"),
-                  target_id: String(targetUser || this.selfId),
+                  user_id: otherId,
+                  is_self_send: senderId === this.selfId,
+                  is_self_receive: receiverId === this.selfId,
+                  display_action: "戳了戳",
+                  display_suffix: "",
+                  display_action_img_url: "",
                 }));
               }
             }
@@ -358,7 +500,7 @@ class MilkyEventTranslator {
     return events;
   }
 
-  // ---- Group events ----
+  // ---- 群组事件转换 ----
 
   _translateGroupEvent(eventName, data) {
     if (eventName === "onGroupNotifyChange") {
@@ -376,8 +518,11 @@ class MilkyEventTranslator {
   _cacheGroupList(data) {
     const groups = Array.isArray(data) ? data[1] : data?.groupList || [];
     if (!Array.isArray(groups)) return;
-    for (const g of groups) {
-      if (g?.groupCode) this._groupList.set(g.groupCode, g);
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      if (g?.groupCode) {
+        this._groupList.set(toIdKey(g.groupCode), g);
+      }
     }
   }
 
@@ -391,7 +536,7 @@ class MilkyEventTranslator {
       for (const [uid, m] of iter) {
         if (m?.uin) {
           this.recordUinUid(m.uin, uid);
-          this.recordGroupMember(groupCode, m.uin, uid, m.nick, m.cardName);
+          this.recordGroupMember(groupCode, m.uin, uid, m.nick, m.cardName, m.role);
         }
       }
     } catch {}
@@ -401,51 +546,65 @@ class MilkyEventTranslator {
     const events = [];
     const notifies = Array.isArray(data) ? data : data?.notifies || [data];
 
-    for (const notify of notifies) {
+    for (let i = 0; i < notifies.length; i++) {
+      const notify = notifies[i];
       if (!notify || notify.status !== 0) continue;
-      const groupId = String(notify.group?.groupCode || notify.groupCode || "0");
-      const requesterUin = String(notify.user1?.uin || notify.requestorUin || "0");
-      const inviterUin = String(notify.user2?.uin || notify.invitorUin || "0");
+      const groupCodeStr = toIdKey(notify.group?.groupCode || notify.groupCode || "0");
+      const groupId = toIdNum(groupCodeStr);
+      const requesterUin = toIdNum(notify.user1?.uin || notify.requestorUin);
+      const inviterUin = toIdNum(notify.user2?.uin || notify.invitorUin);
       const comment = notify.postscript || "";
-      const seq = notify.seq || "";
-      const requestId = `${seq}|${groupId}|${notify.type}`;
+      const seqStr = toIdKey(notify.seq || "0");
+      const seqNum = toIdNum(seqStr);
+
+      if (seqStr) {
+        this._groupNotifyCache.set(seqStr, {
+          groupCode: groupCodeStr,
+          seq: seqStr,
+          type: toIdNum(notify.type) || 1,
+        });
+      }
 
       if (notify.type === 1) {
         events.push(this._makeEvent("group_join_request", {
           group_id: groupId,
-          user_id: requesterUin,
+          notification_seq: seqNum,
+          is_filtered: false,
+          initiator_id: requesterUin,
           comment,
-          request_id: requestId,
         }));
       } else if (notify.type === 2 || notify.type === 13) {
         events.push(this._makeEvent("group_invited_join_request", {
           group_id: groupId,
-          user_id: requesterUin,
-          invitor_id: inviterUin,
-          comment,
-          request_id: requestId,
+          notification_seq: seqNum,
+          initiator_id: inviterUin,
+          target_user_id: requesterUin,
         }));
       }
     }
     return events;
   }
 
-  // ---- Buddy events ----
+  // ---- 好友事件转换 ----
 
   _translateBuddyEvent(eventName, data) {
-    // onBuddyListChangedV2 is a boolean loading-status flag, not a list.
     if (eventName === "onBuddyListChange") {
       const categories = Array.isArray(data) ? data : [];
-      for (const cat of categories) {
+      for (let c = 0; c < categories.length; c++) {
+        const cat = categories[c];
+        const catId = toIdNum(cat?.categoryId);
+        const catName = cat?.categroyName || cat?.categoryName || "默认分组";
         for (const buddy of cat?.buddyList || []) {
           if (buddy.uin && buddy.uid) {
             this.recordUinUid(buddy.uin, buddy.uid);
           }
           if (buddy.uin) {
-            this._buddyList.set(String(buddy.uin), {
+            this._buddyList.set(toIdKey(buddy.uin), {
               uid: buddy.uid || "",
               nick: buddy.nick || "",
               remark: buddy.remark || "",
+              categoryId: catId,
+              categoryName: catName,
             });
           }
         }
@@ -456,13 +615,22 @@ class MilkyEventTranslator {
     if (eventName === "onBuddyReqChange") {
       const events = [];
       const reqs = data?.buddyReqs || data?.unreadNums ? [] : (Array.isArray(data) ? data : [data]);
-      for (const req of reqs) {
-        if (!req?.friendUin) continue;
+      for (let i = 0; i < reqs.length; i++) {
+        const req = reqs[i];
+        if (!req?.friendUin && !req?.friendUid) continue;
+        const uinNum = toIdNum(req.friendUin);
+        const uidStr = ensureStr(req.friendUid || req.friendUin, "");
+        if (uidStr) {
+          this._friendReqCache.set(uidStr, ensureStr(req.friendUid || req.friendUin, ""));
+        }
+        if (uinNum) {
+          this._friendReqCache.set(toIdKey(uinNum), ensureStr(req.friendUid || req.friendUin, ""));
+        }
         events.push(this._makeEvent("friend_request", {
-          user_id: String(req.friendUin),
-          nickname: req.friendNick || "",
+          initiator_id: uinNum,
+          initiator_uid: uidStr,
           comment: req.extMsg || "",
-          request_id: req.friendUin || "",
+          via: req.source || "",
         }));
       }
       return events;

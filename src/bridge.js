@@ -181,10 +181,12 @@ class Bridge {
             setTimeout(() => this.loginService.getQRCodePicture(), 1000);
           },
           onQRCodeLoginSucceed: (data) => {
-            console.log(`[bridge] Login success: uin=${data.uin} uid=${data.uid}`);
-            this.selfInfo.uin = data.uin;
+            const rawUin = firstPresent(data, this.profile ? this.profile.uinFields : ["uin", "Uin", "uinString"]) || data.uin || "";
+            const resolvedUin = typeof rawUin === "number" ? JSON.stringify(Math.trunc(rawUin)) : (typeof rawUin === "string" ? rawUin : "");
+            console.log(`[bridge] Login success: uin=${resolvedUin} uid=${data.uid}`);
+            this.selfInfo.uin = resolvedUin;
             this.selfInfo.uid = data.uid;
-            this._initSession(data.uin, data.uid);
+            this._initSession(resolvedUin, data.uid);
           },
           onLoginFailed: (...args) => {
             console.error("[bridge] Login failed:", args);
@@ -446,11 +448,22 @@ class Bridge {
       } catch {}
     }
 
-    // Notify self info
+    // 同步尝试读取一次自身昵称并通知适配器，3 秒后再兜底刷新好友同步后的昵称
+    try {
+      const initialNickMap = s.getBuddyService().getBuddyNick([this.selfInfo.uid]);
+      const initialNick = initialNickMap && typeof initialNickMap.get === "function"
+        ? initialNickMap.get(this.selfInfo.uid)
+        : "";
+      if (initialNick) {
+        this.selfInfo.nickName = initialNick;
+      }
+    } catch {}
+    if (this.milkyAdapter) this.milkyAdapter.notifyLogin();
+
     setTimeout(() => {
       try {
         const nickMap = s.getBuddyService().getBuddyNick([this.selfInfo.uid]);
-        this.selfInfo.nickName = nickMap.get(this.selfInfo.uid) || "";
+        this.selfInfo.nickName = nickMap.get(this.selfInfo.uid) || this.selfInfo.nickName || "";
         console.log(`[bridge] Self: ${this.selfInfo.nickName} (${this.selfInfo.uin})`);
       } catch (e) {
         console.warn("[bridge] Failed to get self nick:", e.message);

@@ -1,30 +1,73 @@
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
 const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
 const { handlers } = require("./actions");
 const { MilkyEventTranslator } = require("./events");
+const { toIdNum, toIdKey, ensureStr, getMediaDownload } = require("./id");
+
+// 根据图片文件头魔数识别 MIME 类型
+function detectMediaMime(buf) {
+  if (!buf || buf.length < 4) return "application/octet-stream";
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return "image/gif";
+  if (buf.length >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[8] === 0x57 && buf[9] === 0x45) return "image/webp";
+  return "application/octet-stream";
+}
 
 /**
- * Milky protocol adapter.
- *
- * Provides:
- *   - HTTP POST /api/:action  — API calls
- *   - GET /event              — SSE event stream
- *   - WebSocket /event        — WebSocket event stream
- *   - Webhook POST            — push events to configured URLs
+ * Milky 协议服务端适配器：
+ *   - HTTP POST /api/:action  — 动作调用
+ *   - HTTP GET  /media/:token — 免请求头鉴权的签名令牌富媒体代理下载
+ *   - GET /event              — SSE 事件流
+ *   - WebSocket /event        — WebSocket 事件流
+ *   - Webhook POST            — 事件推送
  */
 class MilkyAdapter {
   constructor(config, bridge) {
     this.config = config;
     this.bridge = bridge;
-    this.eventTranslator = new MilkyEventTranslator(bridge);
+    this.publicBaseUrl = typeof config.publicUrl === "string" && config.publicUrl.trim() !== ""
+      ? config.publicUrl.trim().replace(/\/+$/, "")
+      : "";
+    const fallbackHost = !config.host || config.host === "0.0.0.0" || config.host === "::"
+      ? "127.0.0.1"
+      : config.host;
+    this._lastClientBaseUrl = `http://${fallbackHost}:${config.port}`;
+
+    this.eventTranslator = new MilkyEventTranslator(
+      bridge,
+      (token) => `${this._getMediaBaseUrl()}/media/${token}`
+    );
 
     this.httpServer = null;
     this.wss = null;
-    this.sseClients = new Set(); // SSE response objects
-    this.wsClients = new Set(); // WebSocket connections
+    this.sseClients = new Set();
+    this.wsClients = new Set();
+    this.eventSubscribers = new Set();
+    this._pendingDownloads = new Map();
+    this.stats = { eventsTotal: 0, apiCallsTotal: 0 };
     this._memberPreloaded = false;
+  }
+
+  _isLoginReady() {
+    const uin = this.bridge && this.bridge.selfInfo && this.bridge.selfInfo.uin;
+    return toIdNum(uin) > 0;
+  }
+
+  _recordClientHost(req) {
+    if (this.publicBaseUrl !== "") return;
+    const hostHeader = req && req.headers && req.headers.host;
+    if (typeof hostHeader === "string" && hostHeader.trim() !== "") {
+      this._lastClientBaseUrl = `http://${hostHeader.trim()}`;
+    }
+  }
+
+  _getMediaBaseUrl() {
+    return this.publicBaseUrl !== "" ? this.publicBaseUrl : this._lastClientBaseUrl;
   }
 
   async start() {
@@ -34,7 +77,9 @@ class MilkyAdapter {
 
     this.wss = new WebSocketServer({ noServer: true });
     this.wss.on("connection", (ws) => {
-      console.log("[milky] WebSocket client connected");
+      ws._boundUin = toIdKey(this.bridge.selfInfo.uin);
+      ws._boundNick = ensureStr(this.bridge.selfInfo.nickName, "");
+      console.log(`[milky] WebSocket client connected (uin=${ws._boundUin})`);
       this.wsClients.add(ws);
       ws.on("close", () => {
         console.log("[milky] WebSocket client disconnected");
@@ -57,6 +102,12 @@ class MilkyAdapter {
         socket.destroy();
         return;
       }
+      this._recordClientHost(req);
+      if (!this._isLoginReady()) {
+        socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n");
+        socket.destroy();
+        return;
+      }
       this.wss.handleUpgrade(req, socket, head, (ws) => {
         this.wss.emit("connection", ws, req);
       });
@@ -71,10 +122,9 @@ class MilkyAdapter {
     });
   }
 
-  // ---- HTTP request handler ----
+  // ---- HTTP 请求分发 ----
 
   _handleHttp(req, res) {
-    // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -85,27 +135,41 @@ class MilkyAdapter {
       return;
     }
 
+    const url = new URL(req.url, "http://localhost");
+
+    // 能力令牌保护的临时富媒体下载路由，供客户端拉取 NTQQ 图片字节
+    if (req.method === "GET" && url.pathname.startsWith("/media/")) {
+      const token = url.pathname.slice(7);
+      this._handleMediaRequest(res, token);
+      return;
+    }
+
     if (!this._checkAuth(req)) {
       res.writeHead(401, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "failed", retcode: 1403, data: null }));
       return;
     }
 
-    const url = new URL(req.url, "http://localhost");
+    this._recordClientHost(req);
 
-    // SSE event stream
+    // SSE 事件流
     if (req.method === "GET" && url.pathname === "/event") {
+      if (!this._isLoginReady()) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "failed", retcode: 1503, message: "QQ login not ready", data: null }));
+        return;
+      }
       this._handleSSE(req, res);
       return;
     }
 
-    // API call
+    // API 动作调用
     if (req.method === "POST" && url.pathname.startsWith("/api/")) {
       this._handleApiCall(req, res, url);
       return;
     }
 
-    // Health check
+    // 健康检查
     if (req.method === "GET" && url.pathname === "/") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok", impl: "waylay", protocol: "milky" }));
@@ -114,6 +178,123 @@ class MilkyAdapter {
 
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "failed", retcode: 1404, data: null }));
+  }
+
+  async _handleMediaRequest(res, token) {
+    const entry = getMediaDownload(token);
+    if (!entry) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Media not found");
+      return;
+    }
+    try {
+      const buf = await this._ensureMediaBytes(entry);
+      res.writeHead(200, {
+        "Content-Type": detectMediaMime(buf),
+        "Content-Length": buf.length,
+        "Cache-Control": "private, max-age=300",
+      });
+      res.end(buf);
+    } catch (e) {
+      console.warn(`[milky] 拉取富媒体失败 (${entry.msgId}/${entry.elementId}):`, e.message);
+      res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Media download failed");
+    }
+  }
+
+  async _ensureMediaBytes(entry) {
+    if (entry.filePath) {
+      try {
+        const existing = await fs.promises.readFile(entry.filePath);
+        if (existing.length > 0) return existing;
+      } catch {}
+    }
+
+    if (!this.bridge || !this.bridge.session) {
+      throw new Error("NTQQ session not ready");
+    }
+
+    const inflight = this._pendingDownloads.get(entry.key);
+    if (inflight) {
+      return await inflight.promise;
+    }
+
+    let resolveFn = null;
+    let rejectFn = null;
+    const promise = new Promise((resolve, reject) => {
+      resolveFn = resolve;
+      rejectFn = reject;
+    });
+
+    const timer = setTimeout(() => {
+      this._pendingDownloads.delete(entry.key);
+      rejectFn(new Error("Rich media download timed out"));
+    }, 15000);
+
+    this._pendingDownloads.set(entry.key, {
+      promise,
+      resolve: resolveFn,
+      reject: rejectFn,
+      timer,
+      msgId: entry.msgId,
+      elementId: entry.elementId,
+      filePath: entry.filePath,
+    });
+
+    try {
+      if (entry.filePath) {
+        await fs.promises.mkdir(path.dirname(entry.filePath), { recursive: true });
+      }
+      this.bridge.session.getMsgService().downloadRichMedia({
+        fileModelId: "0",
+        downloadSourceType: 0,
+        triggerType: 1,
+        msgId: entry.msgId,
+        chatType: entry.chatType,
+        peerUid: entry.peerUid,
+        elementId: entry.elementId,
+        thumbSize: 0,
+        downloadType: 1,
+        filePath: entry.filePath,
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      this._pendingDownloads.delete(entry.key);
+      throw e;
+    }
+
+    return await promise;
+  }
+
+  async _onRichMediaDownloaded(data) {
+    if (!data || this._pendingDownloads.size === 0) return;
+    const msgId = ensureStr(data.msgId || data.commonFileInfo?.msgId, "");
+    const elemId = ensureStr(data.msgElementId || data.commonFileInfo?.elemId, "");
+    if (!msgId || !elemId) return;
+
+    for (const [key, pending] of this._pendingDownloads.entries()) {
+      if (pending.msgId !== msgId || pending.elementId !== elemId) continue;
+      clearTimeout(pending.timer);
+      this._pendingDownloads.delete(key);
+
+      const errCode = ensureStr(data.fileErrCode, "0");
+      if (errCode !== "0" && errCode !== "") {
+        pending.reject(new Error(data.fileErrMsg || `fileErrCode=${errCode}`));
+        continue;
+      }
+
+      const finalPath = ensureStr(data.filePath, "") || pending.filePath;
+      try {
+        const buf = await fs.promises.readFile(finalPath);
+        if (buf.length === 0) {
+          pending.reject(new Error("Downloaded media file is empty"));
+        } else {
+          pending.resolve(buf);
+        }
+      } catch (e) {
+        pending.reject(e);
+      }
+    }
   }
 
   _handleSSE(req, res) {
@@ -151,6 +332,7 @@ class MilkyAdapter {
     }
 
     console.log(`[milky] <- api: ${action}`);
+    this.stats.apiCallsTotal++;
 
     const handler = handlers[action];
     if (!handler) {
@@ -167,11 +349,11 @@ class MilkyAdapter {
     } catch (e) {
       console.error(`[milky] Action ${action} error:`, e.message);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "failed", retcode: 1400, data: null }));
+      res.end(JSON.stringify({ status: "failed", retcode: 1400, message: e.message || "执行失败", data: null }));
     }
   }
 
-  // ---- Auth ----
+  // ---- 鉴权 ----
 
   _checkAuth(req) {
     if (!this.config.token) return true;
@@ -181,14 +363,16 @@ class MilkyAdapter {
     return token === this.config.token;
   }
 
-  // ---- Event push ----
+  // ---- 事件推送 ----
 
   pushEvent(listenerName, eventName, data) {
+    if (listenerName === "nodeIKernelMsgListener" && eventName === "onRichMediaDownloadComplete") {
+      this._onRichMediaDownloaded(data);
+    }
     const events = this.eventTranslator.translate(listenerName, eventName, data);
     for (const event of events) {
       this._broadcast(event);
     }
-    // Preload group members once group list arrives
     if (!this._memberPreloaded && listenerName === "nodeIKernelGroupListener" && eventName === "onGroupListUpdate") {
       this._memberPreloaded = true;
       setTimeout(() => this._preloadGroupMembers(), 2000);
@@ -196,9 +380,17 @@ class MilkyAdapter {
   }
 
   _broadcast(event) {
+    this.stats.eventsTotal++;
     const payload = JSON.stringify(event, mapReplacer);
 
-    // SSE clients
+    for (const sub of this.eventSubscribers) {
+      try {
+        sub(payload);
+      } catch {
+        this.eventSubscribers.delete(sub);
+      }
+    }
+
     for (const res of this.sseClients) {
       try {
         res.write(`event: ${event.event_type}\ndata: ${payload}\n\n`);
@@ -207,14 +399,12 @@ class MilkyAdapter {
       }
     }
 
-    // WebSocket clients
     for (const ws of this.wsClients) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(payload);
       }
     }
 
-    // Webhooks
     if (this.config.webhookUrls?.length) {
       for (const url of this.config.webhookUrls) {
         this._postWebhook(url, payload);
@@ -250,6 +440,61 @@ class MilkyAdapter {
 
   notifyLogin() {
     this._memberPreloaded = false;
+    const currentUin = toIdKey(this.bridge && this.bridge.selfInfo && this.bridge.selfInfo.uin);
+    const currentNick = ensureStr(this.bridge && this.bridge.selfInfo && this.bridge.selfInfo.nickName, "");
+    if (!currentUin || currentUin === "0") return;
+
+    for (const ws of this.wsClients) {
+      const stale = ws._boundUin !== currentUin || (ws._boundNick === "" && currentNick !== "");
+      if (stale) {
+        console.log(`[milky] 登录信息已更新 (${currentNick}/${currentUin})，刷新早期 WebSocket 连接`);
+        try { ws.close(1012, "Login updated"); } catch {}
+      }
+    }
+  }
+
+  /** 订阅 Milky 协议事件 JSON 字符串流（供控制台实时监控使用） */
+  subscribeEvents(listener) {
+    this.eventSubscribers.add(listener);
+    return () => {
+      this.eventSubscribers.delete(listener);
+    };
+  }
+
+  /** 供控制台调试面板调用指定的 Milky API 动作 */
+  async invokeAction(action, params, providedToken) {
+    if (this.config.token && providedToken !== this.config.token) {
+      return {
+        httpStatus: 401,
+        body: { status: "failed", retcode: 1403, message: "鉴权失败：需要正确的 MILKY_TOKEN", data: null },
+      };
+    }
+
+    this.stats.apiCallsTotal++;
+    console.log(`[milky] <- console-debug: ${action}`);
+
+    const handler = handlers[action];
+    if (!handler) {
+      return {
+        httpStatus: 200,
+        body: { status: "failed", retcode: 1404, message: `未知的 API 动作: ${action}`, data: null },
+      };
+    }
+
+    try {
+      const safeParams = params && typeof params === "object" ? params : {};
+      const data = await handler(safeParams, this.bridge, this.eventTranslator);
+      return {
+        httpStatus: 200,
+        body: { status: "ok", retcode: 0, data },
+      };
+    } catch (e) {
+      console.error(`[milky] 调试动作 ${action} 异常:`, e.message);
+      return {
+        httpStatus: 200,
+        body: { status: "failed", retcode: 1400, message: e.message || "执行失败", data: null },
+      };
+    }
   }
 
   async _preloadGroupMembers() {

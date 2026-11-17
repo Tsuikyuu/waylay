@@ -3,176 +3,205 @@
 const fs = require("fs");
 const path = require("path");
 const { milkyToNt } = require("./message");
+const { toIdNum, toIdKey, ensureStr, getResourceUrl } = require("./id");
 const { VERSION } = require("../version");
 
 const handlers = {};
 
-// ---- System / Info ----
+// ---- 系统与个人信息 API ----
 
 handlers.get_login_info = async (params, bridge) => {
+  const uinNum = toIdNum(bridge.selfInfo.uin);
+  if (uinNum <= 0) {
+    throw new Error("QQ login not ready");
+  }
+  if (!bridge.selfInfo.nickName && bridge.session && bridge.selfInfo.uid) {
+    try {
+      const nickMap = bridge.session.getBuddyService().getBuddyNick([bridge.selfInfo.uid]);
+      const fetched = nickMap && typeof nickMap.get === "function" ? nickMap.get(bridge.selfInfo.uid) : "";
+      if (fetched) {
+        bridge.selfInfo.nickName = fetched;
+      }
+    } catch {}
+  }
   return {
-    user_id: String(bridge.selfInfo.uin || "0"),
-    nickname: bridge.selfInfo.nickName || "",
+    uin: uinNum,
+    nickname: bridge.selfInfo.nickName || toIdKey(uinNum),
   };
 };
 
-handlers.get_impl_info = async () => {
+handlers.get_impl_info = async (params, bridge) => {
+  const plat = process.platform === "win32"
+    ? "windows"
+    : (process.platform === "darwin" ? "macos" : "linux");
   return {
-    name: "waylay",
-    version: VERSION,
-    onebot_version: "",
-    milky_version: "1",
+    impl_name: "waylay",
+    impl_version: VERSION,
+    qq_protocol_version: (bridge.packageJSON && bridge.packageJSON.version) || "",
+    qq_protocol_type: plat,
+    milky_version: "1.0",
   };
 };
 
 handlers.get_user_profile = async (params, bridge) => {
-  const userId = String(params.user_id || "");
-  if (!bridge.session) return { user_id: userId, nickname: "" };
+  const userIdStr = toIdKey(params.user_id);
+  const userIdNum = toIdNum(params.user_id);
+  const emptyProfile = {
+    user_id: userIdNum,
+    nickname: "",
+    qid: "",
+    age: 0,
+    sex: "unknown",
+    remark: "",
+    bio: "",
+    level: 0,
+    country: "",
+    city: "",
+    school: "",
+  };
+  if (!bridge.session || !userIdStr) return emptyProfile;
   try {
     const profileService = bridge.session.getProfileService();
-    const uids = await profileService.getUidByUin("FriendsServiceImpl", [userId]);
-    const uid = uids?.uidInfo?.get(userId) || "";
+    const uids = await profileService.getUidByUin("FriendsServiceImpl", [userIdStr]);
+    const uid = uids?.uidInfo?.get(userIdStr) || "";
     if (uid) {
       const profiles = await profileService.getUserSimpleInfo(false, [uid]);
       const p = profiles?.profileMap?.get(uid) || profiles?.get?.(uid);
       if (p) {
-        return { user_id: userId, nickname: p.nick || p.nickName || "" };
+        return {
+          ...emptyProfile,
+          nickname: p.nick || p.nickName || "",
+          remark: p.remark || "",
+          bio: p.longNick || "",
+        };
       }
     }
   } catch {}
-  return { user_id: userId, nickname: "" };
+  return emptyProfile;
 };
 
-// ---- Friend ----
+// ---- 好友相关 API ----
 
 handlers.get_friend_list = async (params, bridge, eventTranslator) => {
   const cached = eventTranslator.getBuddyList();
-  if (cached.size > 0) {
+  if (cached.size > 0 && !params.no_cache) {
     const friends = [];
-    for (const [uin, info] of cached) {
-      friends.push({
-        user_id: String(uin),
-        nickname: info.nick || "",
-        remark: info.remark || "",
-      });
+    for (const [uin] of cached) {
+      friends.push(eventTranslator.buildFriendEntity(uin));
     }
-    return friends;
+    return { friends };
   }
-  try { bridge.session?.getBuddyService().getBuddyList(true); } catch {}
-  return [];
+  try {
+    const buddyList = await bridge.session?.getBuddyService().getBuddyList(true);
+    if (Array.isArray(buddyList?.data)) {
+      eventTranslator._translateBuddyEvent("onBuddyListChange", buddyList.data);
+    }
+  } catch {}
+  const friends = [];
+  for (const [uin] of eventTranslator.getBuddyList()) {
+    friends.push(eventTranslator.buildFriendEntity(uin));
+  }
+  return { friends };
 };
 
 handlers.get_friend_info = async (params, bridge, eventTranslator) => {
-  const userId = String(params.user_id || "");
-  const buddy = eventTranslator.getBuddyList().get(userId);
-  if (buddy) {
-    return { user_id: userId, nickname: buddy.nick || "", remark: buddy.remark || "" };
-  }
-  return { user_id: userId, nickname: "", remark: "" };
+  return {
+    friend: eventTranslator.buildFriendEntity(params.user_id),
+  };
 };
 
-// ---- Group ----
+// ---- 群聊相关 API ----
 
 handlers.get_group_list = async (params, bridge, eventTranslator) => {
-  const groups = eventTranslator.getGroupList();
-  if (groups.length > 0) {
-    return groups.map(g => ({
-      group_id: String(g.groupCode),
-      group_name: g.groupName || "",
-      member_count: g.memberCount || 0,
-      max_member_count: g.maxMember || 0,
-    }));
+  let rawGroups = eventTranslator.getGroupList();
+  if (rawGroups.length === 0 || params.no_cache) {
+    try {
+      await bridge.session?.getGroupService().getGroupList(true);
+      rawGroups = eventTranslator.getGroupList();
+    } catch {}
   }
-  try { bridge.session?.getGroupService().getGroupList(true); } catch {}
-  return [];
+  const groups = [];
+  for (let i = 0; i < rawGroups.length; i++) {
+    const g = rawGroups[i];
+    groups.push(eventTranslator.buildGroupEntity(g.groupCode, g.groupName));
+  }
+  return { groups };
 };
 
 handlers.get_group_info = async (params, bridge, eventTranslator) => {
-  const groupId = String(params.group_id || "");
-  const groups = eventTranslator.getGroupList();
-  const g = groups.find(g => g.groupCode === groupId);
-  if (g) {
-    return {
-      group_id: String(g.groupCode),
-      group_name: g.groupName || "",
-      member_count: g.memberCount || 0,
-      max_member_count: g.maxMember || 0,
-    };
-  }
-  return { group_id: groupId, group_name: "", member_count: 0, max_member_count: 0 };
+  return {
+    group: eventTranslator.buildGroupEntity(params.group_id),
+  };
 };
 
-async function fetchGroupMembersAndWait(bridge, groupId, eventTranslator) {
+async function fetchGroupMembersAndWait(bridge, groupIdStr) {
   const groupService = bridge.session.getGroupService();
   try {
-    const sceneId = groupService.createMemberListScene(groupId, `milky_fetch_${Date.now()}`);
+    const sceneId = groupService.createMemberListScene(groupIdStr, `milky_fetch_${Date.now()}`);
     await groupService.getNextMemberList(sceneId, undefined, 3000);
     try { groupService.destroyMemberListScene(sceneId); } catch {}
   } catch {}
-  await new Promise(r => setTimeout(r, 500));
+  await new Promise((r) => setTimeout(r, 500));
 }
 
 handlers.get_group_member_list = async (params, bridge, eventTranslator) => {
-  const groupId = String(params.group_id || "");
-  if (!bridge.session) return [];
+  const groupIdStr = toIdKey(params.group_id);
+  if (!bridge.session || !groupIdStr) return { members: [] };
 
-  let cached = eventTranslator._groupMembers.get(groupId);
-  if (!cached || cached.size === 0) {
-    await fetchGroupMembersAndWait(bridge, groupId, eventTranslator);
-    cached = eventTranslator._groupMembers.get(groupId);
+  let cached = eventTranslator._groupMembers.get(groupIdStr);
+  if (!cached || cached.size === 0 || params.no_cache) {
+    await fetchGroupMembersAndWait(bridge, groupIdStr);
+    cached = eventTranslator._groupMembers.get(groupIdStr);
   }
-  if (!cached || cached.size === 0) return [];
+  if (!cached || cached.size === 0) return { members: [] };
 
   const members = [];
-  for (const [uin, info] of cached) {
-    members.push({
-      user_id: String(uin),
-      nickname: info.nick || "",
-      card: info.card || "",
-    });
+  for (const [uin] of cached) {
+    members.push(eventTranslator.buildGroupMemberEntity(groupIdStr, uin));
   }
-  return members;
+  return { members };
 };
 
 handlers.get_group_member_info = async (params, bridge, eventTranslator) => {
-  const groupId = String(params.group_id || "");
-  const userId = String(params.user_id || "");
-  if (!bridge.session) return { user_id: userId, nickname: "", card: "" };
+  const groupIdStr = toIdKey(params.group_id);
+  const userIdStr = toIdKey(params.user_id);
+  if (!bridge.session || !groupIdStr || !userIdStr) {
+    return { member: eventTranslator.buildGroupMemberEntity(groupIdStr, userIdStr) };
+  }
 
-  let member = eventTranslator.getGroupMember(groupId, userId);
-  if (!member) {
-    const groupCache = eventTranslator._groupMembers.get(groupId);
-    if (!groupCache || groupCache.size === 0) {
-      await fetchGroupMembersAndWait(bridge, groupId, eventTranslator);
-      member = eventTranslator.getGroupMember(groupId, userId);
+  let member = eventTranslator.getGroupMember(groupIdStr, userIdStr);
+  if (!member || params.no_cache) {
+    const groupCache = eventTranslator._groupMembers.get(groupIdStr);
+    if (!groupCache || groupCache.size === 0 || params.no_cache) {
+      await fetchGroupMembersAndWait(bridge, groupIdStr);
     }
   }
-  if (member) {
-    return { user_id: userId, nickname: member.nick || "", card: member.card || "" };
-  }
-  return { user_id: userId, nickname: "", card: "" };
+  return {
+    member: eventTranslator.buildGroupMemberEntity(groupIdStr, userIdStr),
+  };
 };
 
-// ---- Messages ----
+// ---- 消息收发与撤回 API ----
 
 handlers.send_private_message = async (params, bridge, eventTranslator) => {
-  const userId = String(params.user_id || "");
-  let peerUid = eventTranslator.getUidByUin(userId);
-  if (!peerUid) {
+  const userIdStr = toIdKey(params.user_id);
+  let peerUid = eventTranslator.getUidByUin(userIdStr);
+  if (!peerUid && bridge.session) {
     try {
-      const r = await bridge.session.getProfileService().getUidByUin("FriendsServiceImpl", [userId]);
-      peerUid = r?.uidInfo?.get(userId) || null;
+      const r = await bridge.session.getProfileService().getUidByUin("FriendsServiceImpl", [userIdStr]);
+      peerUid = r?.uidInfo?.get(userIdStr) || null;
+      if (peerUid) eventTranslator.recordUinUid(userIdStr, peerUid);
     } catch {}
   }
-  if (!peerUid) {
+  if (!peerUid && bridge.session) {
     try {
       const buddyService = bridge.session.getBuddyService();
       const buddyList = await buddyService.getBuddyList(true);
       for (const cat of buddyList?.data || []) {
         for (const buddy of cat.buddyList || []) {
-          if (buddy.uin === userId) {
+          if (toIdKey(buddy.uin) === userIdStr) {
             peerUid = buddy.uid;
-            eventTranslator.recordUinUid(userId, buddy.uid);
+            eventTranslator.recordUinUid(userIdStr, buddy.uid);
             break;
           }
         }
@@ -180,44 +209,47 @@ handlers.send_private_message = async (params, bridge, eventTranslator) => {
       }
     } catch {}
   }
-  if (!peerUid) peerUid = userId;
+  if (!peerUid) peerUid = userIdStr;
   const peer = { chatType: 1, peerUid, guildId: "" };
-  return await sendMessage(peer, params.message || [], bridge, eventTranslator);
+  const segs = Array.isArray(params.message) ? params.message : (Array.isArray(params.segments) ? params.segments : []);
+  return await sendMessage(peer, segs, bridge, eventTranslator);
 };
 
 handlers.send_group_message = async (params, bridge, eventTranslator) => {
-  const groupId = String(params.group_id || "");
-  const peer = { chatType: 2, peerUid: groupId, guildId: "" };
-  return await sendMessage(peer, params.message || [], bridge, eventTranslator);
+  const groupIdStr = toIdKey(params.group_id);
+  const peer = { chatType: 2, peerUid: groupIdStr, guildId: "" };
+  const segs = Array.isArray(params.message) ? params.message : (Array.isArray(params.segments) ? params.segments : []);
+  return await sendMessage(peer, segs, bridge, eventTranslator);
 };
 
 async function sendMessage(peer, segments, bridge, eventTranslator) {
   if (!bridge.session) throw new Error("Session not ready");
   if (!Array.isArray(segments)) segments = [];
 
-  // Build UID resolver for mentions
+  // 解析提及段所需的 UID 与群名片
   const mentionMap = new Map();
-  for (const seg of segments) {
-    if (seg.type !== "mention") continue;
-    const userId = String(seg.data?.user_id || "");
-    if (!userId || mentionMap.has(userId)) continue;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (!seg || seg.type !== "mention") continue;
+    const userIdStr = toIdKey(seg.data?.user_id);
+    if (!userIdStr || mentionMap.has(userIdStr)) continue;
 
     if (peer.chatType === 2) {
-      const member = eventTranslator.getGroupMember(peer.peerUid, userId);
+      const member = eventTranslator.getGroupMember(peer.peerUid, userIdStr);
       if (member?.uid) {
-        mentionMap.set(userId, { uid: member.uid, name: member.card || member.nick || null });
+        mentionMap.set(userIdStr, { uid: member.uid, name: member.card || member.nick || null });
         continue;
       }
     }
-    let uid = eventTranslator.getUidByUin(userId);
+    let uid = eventTranslator.getUidByUin(userIdStr);
     if (!uid) {
       try {
-        const r = await bridge.session.getProfileService().getUidByUin("FriendsServiceImpl", [userId]);
-        uid = r?.uidInfo?.get(userId) || null;
-        if (uid) eventTranslator.recordUinUid(userId, uid);
+        const r = await bridge.session.getProfileService().getUidByUin("FriendsServiceImpl", [userIdStr]);
+        uid = r?.uidInfo?.get(userIdStr) || null;
+        if (uid) eventTranslator.recordUinUid(userIdStr, uid);
       } catch {}
     }
-    mentionMap.set(userId, { uid: uid || "", name: null });
+    mentionMap.set(userIdStr, { uid: uid || "", name: null });
   }
 
   const uidResolver = mentionMap.size > 0
@@ -227,26 +259,28 @@ async function sendMessage(peer, segments, bridge, eventTranslator) {
   const elements = await milkyToNt(segments, uidResolver);
   if (!elements.length) throw new Error("Empty message");
 
-  // Resolve reply elements: convert message_seq -> real NTQQ msgId
-  for (const el of elements) {
+  // 将引用回复的 message_seq 还原为 NTQQ 真实 msgId
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
     if (el.elementType === 7 && el.replyElement) {
-      const seq = Number(el.replyElement.replayMsgId);
+      const seq = toIdNum(el.replyElement.replayMsgId);
       const realMsgId = eventTranslator.resolveSeq(seq);
       if (realMsgId) {
         el.replyElement.replayMsgId = realMsgId;
       }
-      const cached = eventTranslator.getCachedMsg(seq);
-      if (cached) {
-        el.replyElement.replayMsgSeq = cached._ntMsgSeq || "0";
-        el.replyElement.senderUin = String(cached.sender?.user_id || "0");
-        el.replyElement.senderUinStr = String(cached.sender?.user_id || "0");
+      const meta = eventTranslator.getCachedNtMeta(seq);
+      if (meta) {
+        el.replyElement.replayMsgSeq = meta.ntMsgSeq || "0";
+        el.replyElement.senderUin = meta.senderUinStr || "0";
+        el.replyElement.senderUinStr = meta.senderUinStr || "0";
       }
     }
   }
 
-  // Register media files with NTQQ
+  // 注册富媒体文件路径
   const msgService = bridge.session.getMsgService();
-  for (const el of elements) {
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
     try {
       if (el.elementType === 2 && el.picElement?.sourcePath) {
         const mediaPath = registerMedia(msgService, el.picElement.md5HexStr, el.picElement.fileName, 2);
@@ -268,14 +302,33 @@ async function sendMessage(peer, segments, bridge, eventTranslator) {
         }
       }
     } catch (e) {
-      console.warn(`[milky-actions] Media registration error (type ${el.elementType}):`, e.message);
+      console.warn(`[milky-actions] 注册富媒体异常 (type ${el.elementType}):`, e.message);
     }
   }
 
-  const result = await msgService.sendMsg("0", peer, elements, new Map());
-  const msgId = result?.msgId || result?.result?.msgId || "0";
-  const seq = eventTranslator.createSeq(msgId);
-  return { message_seq: seq };
+  let msgId = "0";
+  try {
+    if (typeof msgService.generateMsgUniqueId === "function") {
+      const generated = msgService.generateMsgUniqueId(peer.chatType, ensureStr(Date.now(), ""));
+      if (typeof generated === "string" && generated !== "" && generated !== "0") {
+        msgId = generated;
+      }
+    }
+  } catch {}
+
+  const preAllocatedSeq = msgId !== "0" ? eventTranslator.createSeq(msgId) : 0;
+  const result = await msgService.sendMsg(msgId, peer, elements, new Map());
+  if (result && typeof result.result === "number" && result.result !== 0) {
+    throw new Error(result.errMsg || `sendMsg failed (${result.result})`);
+  }
+  const returnedMsgId = ensureStr(result?.msgId || result?.result?.msgId, "");
+  const seq = preAllocatedSeq > 0
+    ? preAllocatedSeq
+    : eventTranslator.createSeq(returnedMsgId);
+  return {
+    message_seq: seq,
+    time: Math.floor(Date.now() / 1000),
+  };
 }
 
 function registerMedia(msgService, md5, fileName, elementType) {
@@ -297,234 +350,258 @@ function registerMedia(msgService, md5, fileName, elementType) {
 }
 
 handlers.recall_private_message = async (params, bridge, eventTranslator) => {
-  const seq = Number(params.message_seq);
+  const seq = toIdNum(params.message_seq);
   const msgId = eventTranslator.resolveSeq(seq);
-  if (!msgId || !bridge.session) return null;
-  const userId = String(params.user_id || "");
-  let peerUid = eventTranslator.getUidByUin(userId) || userId;
+  if (!msgId || !bridge.session) return {};
+  const userIdStr = toIdKey(params.user_id);
+  const peerUid = eventTranslator.getUidByUin(userIdStr) || userIdStr;
   try {
     await bridge.session.getMsgService().recallMsg({ chatType: 1, peerUid, guildId: "" }, [msgId]);
   } catch (e) {
-    console.error("[milky-actions] recall_private_message error:", e.message);
+    console.error("[milky-actions] recall_private_message 出错:", e.message);
   }
-  return null;
+  return {};
 };
 
 handlers.recall_group_message = async (params, bridge, eventTranslator) => {
-  const seq = Number(params.message_seq);
+  const seq = toIdNum(params.message_seq);
   const msgId = eventTranslator.resolveSeq(seq);
-  if (!msgId || !bridge.session) return null;
-  const groupId = String(params.group_id || "");
+  if (!msgId || !bridge.session) return {};
+  const groupIdStr = toIdKey(params.group_id);
   try {
-    await bridge.session.getMsgService().recallMsg({ chatType: 2, peerUid: groupId, guildId: "" }, [msgId]);
+    await bridge.session.getMsgService().recallMsg({ chatType: 2, peerUid: groupIdStr, guildId: "" }, [msgId]);
   } catch (e) {
-    console.error("[milky-actions] recall_group_message error:", e.message);
+    console.error("[milky-actions] recall_group_message 出错:", e.message);
   }
-  return null;
+  return {};
 };
 
 handlers.get_message = async (params, bridge, eventTranslator) => {
-  const seq = Number(params.message_seq);
+  const seq = toIdNum(params.message_seq);
   const cached = eventTranslator.getCachedMsg(seq);
   if (cached) {
-    return {
-      message_seq: seq,
-      message_scene: cached.message_scene,
-      peer_id: cached.peer_id,
-      sender: cached.sender,
-      message: cached.message,
-      time: cached.time,
-    };
+    return { message: cached };
   }
-  return null;
+  return { message: null };
 };
 
-// ---- Group admin operations ----
+handlers.get_resource_temp_url = async (params) => {
+  const resId = ensureStr(params.resource_id, "");
+  return { url: getResourceUrl(resId) };
+};
+
+// ---- 群管理操作 API（均按规范返回空对象 {}） ----
 
 handlers.set_group_name = async (params, bridge) => {
-  if (!bridge.session) return null;
+  if (!bridge.session) return {};
+  const name = ensureStr(params.new_group_name || params.group_name, "");
   try {
-    bridge.session.getGroupService().modifyGroupName(String(params.group_id), params.group_name || "");
+    bridge.session.getGroupService().modifyGroupName(toIdKey(params.group_id), name);
   } catch {}
-  return null;
+  return {};
 };
 
 handlers.set_group_member_card = async (params, bridge) => {
-  if (!bridge.session) return null;
+  if (!bridge.session) return {};
   try {
     bridge.session.getGroupService().modifyMemberCardName(
-      String(params.group_id), String(params.user_id), params.card || "");
+      toIdKey(params.group_id),
+      toIdKey(params.user_id),
+      ensureStr(params.card, "")
+    );
   } catch {}
-  return null;
+  return {};
 };
 
-handlers.set_group_member_admin = async (params, bridge) => {
-  if (!bridge.session) return null;
+handlers.set_group_member_admin = async (params, bridge, eventTranslator) => {
+  if (!bridge.session) return {};
+  const groupIdStr = toIdKey(params.group_id);
+  const userIdStr = toIdKey(params.user_id);
+  const uid = eventTranslator.getUidByUin(userIdStr) || userIdStr;
+  const isSet = params.is_set !== undefined ? params.is_set !== false : params.is_admin !== false;
   try {
-    bridge.session.getGroupService().setMemberRole(
-      String(params.group_id), String(params.user_id), params.is_admin ? 3 : 2);
+    bridge.session.getGroupService().setMemberRole(groupIdStr, uid, isSet ? 3 : 2);
   } catch {}
-  return null;
+  return {};
 };
 
-handlers.set_group_member_mute = async (params, bridge) => {
-  if (!bridge.session) return null;
+handlers.set_group_member_mute = async (params, bridge, eventTranslator) => {
+  if (!bridge.session) return {};
+  const groupIdStr = toIdKey(params.group_id);
+  const userIdStr = toIdKey(params.user_id);
+  const uid = eventTranslator.getUidByUin(userIdStr) || userIdStr;
   try {
     bridge.session.getGroupService().setMemberShutUp(
-      String(params.group_id), [{ uid: String(params.user_id), timeStamp: params.duration || 0 }]);
+      groupIdStr,
+      [{ uid, timeStamp: toIdNum(params.duration) }]
+    );
   } catch {}
-  return null;
+  return {};
 };
 
 handlers.set_group_whole_mute = async (params, bridge) => {
-  if (!bridge.session) return null;
+  if (!bridge.session) return {};
   try {
-    bridge.session.getGroupService().setGroupShutUp(String(params.group_id), params.is_mute !== false);
+    bridge.session.getGroupService().setGroupShutUp(toIdKey(params.group_id), params.is_mute !== false);
   } catch {}
-  return null;
+  return {};
 };
 
-handlers.kick_group_member = async (params, bridge) => {
-  if (!bridge.session) return null;
+handlers.kick_group_member = async (params, bridge, eventTranslator) => {
+  if (!bridge.session) return {};
+  const groupIdStr = toIdKey(params.group_id);
+  const userIdStr = toIdKey(params.user_id);
+  const uid = eventTranslator.getUidByUin(userIdStr) || userIdStr;
+  const rejectAdd = params.reject_add_request === true || params.reject_add === true;
   try {
-    bridge.session.getGroupService().kickMember(
-      String(params.group_id), [String(params.user_id)], params.reject_add || false);
+    bridge.session.getGroupService().kickMember(groupIdStr, [uid], rejectAdd);
   } catch {}
-  return null;
+  return {};
 };
 
 handlers.quit_group = async (params, bridge) => {
-  if (!bridge.session) return null;
+  if (!bridge.session) return {};
   try {
-    bridge.session.getGroupService().quitGroup(String(params.group_id));
+    bridge.session.getGroupService().quitGroup(toIdKey(params.group_id));
   } catch {}
-  return null;
+  return {};
 };
 
-// ---- Nudge ----
+// ---- 戳一戳 API ----
 
 handlers.send_group_nudge = async (params, bridge, eventTranslator) => {
-  if (!bridge.session) return null;
-  const userId = String(params.user_id || "");
-  let uid = eventTranslator.getUidByUin(userId);
+  if (!bridge.session) return {};
+  const userIdStr = toIdKey(params.user_id);
+  let uid = eventTranslator.getUidByUin(userIdStr);
   if (!uid) {
     try {
-      const r = await bridge.session.getProfileService().getUidByUin("FriendsServiceImpl", [userId]);
-      uid = r?.uidInfo?.get(userId);
+      const r = await bridge.session.getProfileService().getUidByUin("FriendsServiceImpl", [userIdStr]);
+      uid = r?.uidInfo?.get(userIdStr);
     } catch {}
   }
-  if (!uid) uid = userId;
+  if (!uid) uid = userIdStr;
   try {
     const groupService = bridge.session.getGroupService();
     if (typeof groupService.sendPoke === "function") {
-      await groupService.sendPoke(String(params.group_id), uid);
+      await groupService.sendPoke(toIdKey(params.group_id), uid);
     }
   } catch (e) {
-    console.error("[milky-actions] send_group_nudge error:", e.message);
+    console.error("[milky-actions] send_group_nudge 出错:", e.message);
   }
-  return null;
+  return {};
 };
 
 handlers.send_friend_nudge = async (params, bridge, eventTranslator) => {
-  if (!bridge.session) return null;
-  const userId = String(params.user_id || "");
-  let uid = eventTranslator.getUidByUin(userId) || userId;
+  if (!bridge.session) return {};
+  const userIdStr = toIdKey(params.user_id);
+  const uid = eventTranslator.getUidByUin(userIdStr) || userIdStr;
   try {
     const msgService = bridge.session.getMsgService();
     if (typeof msgService.sendPoke === "function") {
       await msgService.sendPoke(uid);
     }
   } catch (e) {
-    console.error("[milky-actions] send_friend_nudge error:", e.message);
+    console.error("[milky-actions] send_friend_nudge 出错:", e.message);
   }
-  return null;
+  return {};
 };
 
-// ---- Requests ----
+// ---- 好友与加群请求处理 API ----
 
-handlers.accept_friend_request = async (params, bridge) => {
-  if (!bridge.session) return null;
-  const requestId = String(params.request_id || "");
+handlers.accept_friend_request = async (params, bridge, eventTranslator) => {
+  if (!bridge.session) return {};
+  const key = ensureStr(params.initiator_uid || params.request_id, "") || toIdKey(params.initiator_id);
+  const rawId = eventTranslator._friendReqCache.get(key) || key;
   try {
     const buddyService = bridge.session.getBuddyService();
     if (typeof buddyService.approveOrRejectFriendRequest === "function") {
-      await buddyService.approveOrRejectFriendRequest(requestId, true);
+      await buddyService.approveOrRejectFriendRequest(rawId, true);
     } else if (typeof buddyService.handleFriendRequest === "function") {
-      await buddyService.handleFriendRequest(requestId, true);
+      await buddyService.handleFriendRequest(rawId, true);
     }
   } catch (e) {
-    console.error("[milky-actions] accept_friend_request error:", e.message);
+    console.error("[milky-actions] accept_friend_request 出错:", e.message);
   }
-  return null;
+  return {};
 };
 
-handlers.reject_friend_request = async (params, bridge) => {
-  if (!bridge.session) return null;
-  const requestId = String(params.request_id || "");
+handlers.reject_friend_request = async (params, bridge, eventTranslator) => {
+  if (!bridge.session) return {};
+  const key = ensureStr(params.initiator_uid || params.request_id, "") || toIdKey(params.initiator_id);
+  const rawId = eventTranslator._friendReqCache.get(key) || key;
   try {
     const buddyService = bridge.session.getBuddyService();
     if (typeof buddyService.approveOrRejectFriendRequest === "function") {
-      await buddyService.approveOrRejectFriendRequest(requestId, false);
+      await buddyService.approveOrRejectFriendRequest(rawId, false);
     } else if (typeof buddyService.handleFriendRequest === "function") {
-      await buddyService.handleFriendRequest(requestId, false);
+      await buddyService.handleFriendRequest(rawId, false);
     }
   } catch (e) {
-    console.error("[milky-actions] reject_friend_request error:", e.message);
+    console.error("[milky-actions] reject_friend_request 出错:", e.message);
   }
-  return null;
+  return {};
 };
 
-handlers.accept_group_join_request = async (params, bridge) => {
-  if (!bridge.session) return null;
-  const requestId = String(params.request_id || "");
-  const [seq, groupCode, type] = requestId.split("|");
-  if (!seq || !groupCode) return null;
+async function handleGroupRequestAction(params, bridge, eventTranslator, approve) {
+  if (!bridge.session) return {};
+  let seq = toIdKey(params.notification_seq);
+  let groupCode = toIdKey(params.group_id);
+  let typeNum = params.notification_type === "invited_join_request" ? 2 : 1;
+
+  if (!seq && typeof params.request_id === "string") {
+    const parts = params.request_id.split("|");
+    seq = parts[0] || "";
+    groupCode = parts[1] || "";
+    typeNum = toIdNum(parts[2]) || 1;
+  } else if (seq && eventTranslator._groupNotifyCache.has(seq)) {
+    const cached = eventTranslator._groupNotifyCache.get(seq);
+    if (!groupCode) groupCode = cached.groupCode;
+    typeNum = cached.type || typeNum;
+  }
+
+  if (!seq || !groupCode) return {};
+  const reason = approve ? "" : ensureStr(params.reason, "");
+  const opCode = approve ? 1 : 2;
   try {
     const groupService = bridge.session.getGroupService();
     if (typeof groupService.operateGroupReqNotify === "function") {
-      await groupService.operateGroupReqNotify(1, { groupCode, seq, type: Number(type) || 1 }, "");
+      await groupService.operateGroupReqNotify(opCode, { groupCode, seq, type: typeNum }, reason);
     } else if (typeof groupService.operateGroupNotify === "function") {
-      await groupService.operateGroupNotify(1, { groupCode, seq, type: Number(type) || 1 }, "");
+      await groupService.operateGroupNotify(opCode, { groupCode, seq, type: typeNum }, reason);
     }
   } catch (e) {
-    console.error("[milky-actions] accept_group_join_request error:", e.message);
+    console.error("[milky-actions] 处理加群请求出错:", e.message);
   }
-  return null;
+  return {};
+}
+
+handlers.accept_group_request = async (params, bridge, eventTranslator) => {
+  return handleGroupRequestAction(params, bridge, eventTranslator, true);
 };
 
-handlers.reject_group_join_request = async (params, bridge) => {
-  if (!bridge.session) return null;
-  const requestId = String(params.request_id || "");
-  const reason = params.reason || "";
-  const [seq, groupCode, type] = requestId.split("|");
-  if (!seq || !groupCode) return null;
-  try {
-    const groupService = bridge.session.getGroupService();
-    if (typeof groupService.operateGroupReqNotify === "function") {
-      await groupService.operateGroupReqNotify(2, { groupCode, seq, type: Number(type) || 1 }, reason);
-    } else if (typeof groupService.operateGroupNotify === "function") {
-      await groupService.operateGroupNotify(2, { groupCode, seq, type: Number(type) || 1 }, reason);
-    }
-  } catch (e) {
-    console.error("[milky-actions] reject_group_join_request error:", e.message);
-  }
-  return null;
+handlers.reject_group_request = async (params, bridge, eventTranslator) => {
+  return handleGroupRequestAction(params, bridge, eventTranslator, false);
 };
 
-// ---- Stubs ----
+// 保留旧动作名别名兼容
+handlers.accept_group_join_request = handlers.accept_group_request;
+handlers.reject_group_join_request = handlers.reject_group_request;
 
-handlers.get_history_messages = async () => ({ messages: [] });
-handlers.get_resource_temp_url = async () => ({ url: "" });
+// ---- 其余标准接口占位实现 ----
+
+handlers.get_history_messages = async () => ({ messages: [], next_message_seq: 0 });
 handlers.get_forwarded_messages = async () => ({ messages: [] });
-handlers.mark_message_as_read = async () => null;
-handlers.send_profile_like = async () => null;
-handlers.delete_friend = async () => null;
+handlers.mark_message_as_read = async () => ({});
+handlers.send_profile_like = async () => ({});
+handlers.delete_friend = async () => ({});
 handlers.get_friend_requests = async () => ({ requests: [] });
-handlers.set_avatar = async () => null;
-handlers.set_nickname = async () => null;
-handlers.set_bio = async () => null;
+handlers.get_group_notifications = async () => ({ notifications: [], next_notification_seq: 0 });
+handlers.set_avatar = async () => ({});
+handlers.set_nickname = async () => ({});
+handlers.set_bio = async () => ({});
 handlers.get_cookies = async () => ({ cookies: "" });
-handlers.get_csrf_token = async () => ({ token: 0 });
-handlers.set_group_avatar = async () => null;
+handlers.get_csrf_token = async () => ({ csrf_token: "" });
+handlers.set_group_avatar = async () => ({});
+handlers.set_group_member_special_title = async () => ({});
 
 module.exports = { handlers };
