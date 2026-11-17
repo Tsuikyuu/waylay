@@ -3,16 +3,20 @@ FROM node:24-trixie-slim
 
 ARG TARGETARCH
 ARG USER_NAME=node
-# QQ NT Linux package. 3.2.31 ships on qqdl.gtimg.cn under a per-release,
-# hash-prefixed beta path (see AUR `linuxqq`); the old dldir1v6 `/Linux/*_01.deb`
-# scheme 404s for it. Override QQ_PKG_PREFIX + QQ_VERSION together to move versions.
-ARG QQ_VERSION=3.2.31-51102
-ARG QQ_PKG_PREFIX=https://qqdl.gtimg.cn/qqfile/QQNT/9.9.32/beta/c390e792
+# QQ NT Linux package. 3.2.34 ships on qqdl.gtimg.cn under a per-release,
+# hash-prefixed beta path (see AUR `linuxqq`). The deb is fetched ahead of time
+# and archived under qq-debs/ so image rebuilds no longer depend on that URL
+# staying online (old schemes/hashes 404 once a release is rotated out).
+# QQ_PKG_PREFIX documents where the archived debs came from.
+ARG QQ_VERSION=3.2.34-53644
+ARG QQ_PKG_PREFIX=https://qqdl.gtimg.cn/qqfile/QQNT/9.9.36/beta/9ee04bef
 ARG APP_UID=1000
 ARG APP_GID=1000
 
 # Use TUNA mirror for faster apt downloads in China
 # RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+
+COPY qq-debs/ /tmp/qq-debs/
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -21,12 +25,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       curl ca-certificates && \
     deb_arch="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$deb_arch" in amd64|arm64) ;; *) echo "Unsupported architecture: $deb_arch" >&2; exit 1 ;; esac && \
-    curl -fsSL -o /tmp/qq.deb "${QQ_PKG_PREFIX}/linuxqq_${QQ_VERSION}_${deb_arch}.deb" && \
+    cp "/tmp/qq-debs/linuxqq_${QQ_VERSION}_${deb_arch}.deb" /tmp/qq.deb && \
     apt-get install -y --no-install-recommends \
       xvfb dbus x11-utils \
       libgbm1 libxshmfence1 ffmpeg \
       /tmp/qq.deb && \
-    rm -f /tmp/qq.deb
+    rm -rf /tmp/qq.deb /tmp/qq-debs
 
 # Use npmmirror for faster npm downloads in China
 # RUN npm config set registry https://registry.npmmirror.com
@@ -42,6 +46,7 @@ RUN set -e; \
         groupmod -n "${USER_NAME}" node; \
         usermod  -l "${USER_NAME}" -d "/home/${USER_NAME}" -m node; \
     fi; \
+    mkdir -p "/home/${USER_NAME}/.config/QQ"; \
     chown -R "${APP_UID}:${APP_GID}" "/home/${USER_NAME}"
 
 # Root-only build steps first, so we only need a single USER switch below.
