@@ -71,21 +71,21 @@ sudo service docker start
 在 WSL 终端中运行：
 
 ```bash
-docker run -d --name waylay --privileged \
-  -p 13000:13000 -p 3001:3001 \
+docker run -d --name waylay \
+  -p 13000:13000 -p 8082:8082 \
+  -e MILKY_HTTP_PORT=8082 \
   micuks/waylay:latest
 ```
 
-带参数启动（快速登录 + 反向 WS）：
+带参数启动（快速登录 + Milky 协议鉴权）：
 
 ```bash
-docker run -d --name waylay --privileged \
-  -p 13000:13000 -p 3001:3001 \
+docker run -d --name waylay \
+  -p 13000:13000 -p 8082:8082 \
   -e AUTO_LOGIN_QQ=123456789 \
-  -e ONEBOT_WS_PORT=3001 \
-  -e 'ONEBOT_WS_REVERSE_URLS=["ws://host.docker.internal:2536/OneBotv11"]' \
-  --add-host=host.docker.internal:host-gateway \
-  -v waylay_qq:/root/.config/QQ \
+  -e MILKY_HTTP_PORT=8082 \
+  -e MILKY_TOKEN=your_token \
+  -v waylay_qq:/home/node/.config/QQ \
   micuks/waylay:latest
 ```
 
@@ -97,29 +97,17 @@ docker run -d --name waylay --privileged \
 http://localhost:13000/qrcode
 ```
 
-使用手机 QQ 扫描页面上的二维码完成登录。
+使用手机 QQ 扫描二维码图片完成登录。
 
 ## 步骤五：连接 Bot 框架
 
-### Yunzai（反向 WebSocket）
+通过 Milky 协议接入 Bot 框架：
 
-在 `docker run` 中添加反向 WS 地址，指向 Yunzai 的监听端口：
+- **HTTP API**：`http://localhost:8082/api/:action`
+- **WebSocket 事件流**：`ws://localhost:8082/event`
+- **SSE 事件流**：`http://localhost:8082/event`
 
-```bash
--e 'ONEBOT_WS_REVERSE_URLS=["ws://host.docker.internal:2536/OneBotv11"]'
---add-host=host.docker.internal:host-gateway
-```
-
-Yunzai 端配置反向 WS 监听端口为 `2536` 即可。
-
-### Koishi（正向 WebSocket）
-
-在 Koishi 中安装 `adapter-onebot` 插件，配置正向 WebSocket 连接：
-
-- 协议：`ws`
-- 地址：`localhost:3001`
-
-确保 Waylay 启动时设置了 `ONEBOT_WS_PORT=3001`。
+确保 Waylay 启动时设置了 `MILKY_HTTP_PORT=8082`。
 
 ## 常见问题
 
@@ -145,11 +133,12 @@ sudo usermod -aG docker $USER
 2. 或者设置 `AUTO_LOGIN_QQ` 环境变量实现快速登录，避免反复扫码：
 
 ```bash
-docker run -d --name waylay --privileged \
-  -p 13000:13000 -p 3001:3001 \
+docker run -d --name waylay \
+  -p 13000:13000 -p 8082:8082 \
   -e AUTO_LOGIN_QQ=123456789 \
-  -v waylay_qq:/root/.config/QQ \
+  -e MILKY_HTTP_PORT=8082 \
+  -v waylay_qq:/home/node/.config/QQ \
   micuks/waylay:latest
 ```
 
-使用 `-v waylay_qq:/root/.config/QQ` 挂载数据卷可以持久化登录状态，避免容器重启后需要重新登录。
+使用 `-v waylay_qq:/home/node/.config/QQ` 挂载数据卷可以持久化登录状态，避免容器重启后需要重新登录。

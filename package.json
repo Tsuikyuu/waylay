@@ -1,7 +1,7 @@
 {
   "name": "qq-bridge",
   "version": "0.4.3",
-  "description": "Lightweight, fast, pure-JS headless NTQQ bridge with built-in OneBot v11 + Milky support",
+  "description": "Lightweight, fast, pure-JS headless NTQQ bridge with built-in Milky support",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"

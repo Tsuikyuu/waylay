@@ -19,9 +19,8 @@ class Bridge {
     this.session = null;
     this.loginService = null;
     this.selfInfo = { uin: "", uid: "", nickName: "" };
-    this.server = null; // set externally after construction
-    this.onebotAdapter = null; // set externally after construction
-    this.milkyAdapter = null; // set externally after construction
+    this.server = null; // 构造后由外部注入
+    this.milkyAdapter = null; // 构造后由外部注入
 
     this.appDir = config.qqResourceAppDir || "/opt/QQ/resources/app";
     this.packageJSON = JSON.parse(
@@ -29,17 +28,12 @@ class Bridge {
     );
   }
 
-  /** Set the BridgeServer instance for pushing events */
+  /** 设置用于推送事件的 BridgeServer 实例 */
   setServer(server) {
     this.server = server;
   }
 
-  /** Set the OneBotAdapter instance for pushing events */
-  setOneBotAdapter(adapter) {
-    this.onebotAdapter = adapter;
-  }
-
-  /** Set the MilkyAdapter instance for pushing events */
+  /** 设置用于推送事件的 MilkyAdapter 实例 */
   setMilkyAdapter(adapter) {
     this.milkyAdapter = adapter;
   }
@@ -60,9 +54,6 @@ class Bridge {
 
     if (this.server) {
       this.server.pushEvent(event.listenerName, event.eventName, event.data);
-    }
-    if (this.onebotAdapter) {
-      this.onebotAdapter.pushEvent(event.listenerName, event.eventName, event.data);
     }
     if (this.milkyAdapter) {
       this.milkyAdapter.pushEvent(event.listenerName, event.eventName, event.data);
@@ -472,8 +463,7 @@ class Bridge {
         type: "on_session",
         data: { sub_type: "onSessionInitComplete", data: {} },
       });
-      // Re-notify adapters so clients re-fetch friend/group lists
-      if (this.onebotAdapter) this.onebotAdapter.notifyLogin();
+      // 重新通知适配器以便刷新昵称及客户端连接状态
       if (this.milkyAdapter) this.milkyAdapter.notifyLogin();
     }, 3000);
   }

@@ -129,10 +129,9 @@ Environment=DISPLAY=:99
 Environment=LIBGL_ALWAYS_SOFTWARE=1
 Environment=BRIDGE_PORT=13000
 Environment=BRIDGE_HOST=0.0.0.0
-Environment=ONEBOT_WS_PORT=3001
-Environment=ONEBOT_WS_HOST=0.0.0.0
-Environment=ONEBOT_WS_REVERSE_URLS=[]
-Environment=ONEBOT_TOKEN=
+Environment=MILKY_HTTP_PORT=8082
+Environment=MILKY_HOST=0.0.0.0
+Environment=MILKY_TOKEN=
 Environment=QQ_APP_DIR=/opt/QQ/resources/app
 WorkingDirectory=/opt/waylay
 ExecStartPre=/usr/bin/Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX -noreset
@@ -157,7 +156,7 @@ echo ""
 echo "  Example overrides:"
 echo "    [Service]"
 echo "    Environment=AUTO_LOGIN_QQ=123456789"
-echo "    Environment=ONEBOT_WS_REVERSE_URLS=[\"ws://127.0.0.1:2536/OneBotv11\"]"
+echo "    Environment=MILKY_TOKEN=your_secret_token"
 echo ""
 echo "Start Waylay:"
 echo "  sudo systemctl start waylay"

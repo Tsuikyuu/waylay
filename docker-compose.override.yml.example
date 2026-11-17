@@ -20,11 +20,10 @@ services:
       #   HTTP_PROXY: ""
       #   HTTPS_PROXY: ""
 
-    # Loads AUTO_LOGIN_QQ / ONEBOT_WS_REVERSE_URLS from .env into the container.
+    # 从 .env 加载 AUTO_LOGIN_QQ / MILKY_TOKEN 等环境变量
     env_file:
       - .env
 
-    # Bind-mount host bot-framework data so file:// paths in incoming messages
-    # resolve to the same path inside the container. Remove if unused.
+    # 挂载宿主机机器人数据目录，使消息中的 file:// 本地路径在容器内一致可用；不用时可移除
     volumes:
-      - ${YUNZAI_DATA_PATH}:${YUNZAI_DATA_PATH}:ro
+      - ${BOT_DATA_PATH}:${BOT_DATA_PATH}:ro

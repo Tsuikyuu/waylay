@@ -2,7 +2,6 @@
 
 const { Bridge } = require("./bridge");
 const { BridgeServer } = require("./server");
-const { OneBotAdapter } = require("./onebot/adapter");
 const { MilkyAdapter } = require("./milky/adapter");
 const { VERSION } = require("./version");
 
@@ -18,16 +17,11 @@ function parseConfig() {
     autoRelogin: process.env.AUTO_RELOGIN !== "false",
     qqResourceAppDir: process.env.QQ_APP_DIR || "/opt/QQ/resources/app",
 
-    // OneBot v11 config
-    onebotWsPort: parseInt(process.env.ONEBOT_WS_PORT || "0"),
-    onebotWsHost: process.env.ONEBOT_WS_HOST || "0.0.0.0",
-    onebotWsReverseUrls: parseJsonArray(process.env.ONEBOT_WS_REVERSE_URLS || ""),
-    onebotToken: process.env.ONEBOT_TOKEN || "",
-
-    // Milky protocol config
+    // Milky 协议配置
     milkyPort: parseInt(process.env.MILKY_HTTP_PORT || "0"),
     milkyHost: process.env.MILKY_HOST || "0.0.0.0",
     milkyToken: process.env.MILKY_TOKEN || "",
+    milkyPublicUrl: process.env.MILKY_PUBLIC_URL || "",
     milkyWebhookUrls: parseJsonArray(process.env.MILKY_WEBHOOK_URLS || ""),
   };
 
@@ -36,11 +30,6 @@ function parseConfig() {
     if (arg.startsWith("--host=")) config.host = arg.split("=")[1];
     if (arg.startsWith("--qq-app-dir=")) config.qqResourceAppDir = arg.split("=")[1];
     if (arg.startsWith("--quick-login=")) config.quickLoginQQ = arg.split("=")[1];
-    if (arg.startsWith("--onebot-ws-port=")) config.onebotWsPort = parseInt(arg.split("=")[1]);
-    if (arg.startsWith("--onebot-ws-reverse=")) {
-      config.onebotWsReverseUrls = parseJsonArray(arg.split("=").slice(1).join("="));
-    }
-    if (arg.startsWith("--onebot-token=")) config.onebotToken = arg.split("=")[1];
     if (arg.startsWith("--milky-port=")) config.milkyPort = parseInt(arg.split("=")[1]);
     if (arg.startsWith("--milky-token=")) config.milkyToken = arg.split("=")[1];
     if (arg.startsWith("--milky-webhook=")) {
@@ -71,45 +60,26 @@ async function main() {
 
   const bridge = new Bridge(config);
 
-  // Bridge server (for LLOneBot backward compat)
+  // 桥接服务
   const server = new BridgeServer(config.port, config.host, bridge);
   bridge.setServer(server);
 
-  // OneBot v11 adapter (for Yunzai / other frameworks)
-  const hasOneBot = config.onebotWsPort || config.onebotWsReverseUrls.length;
-  let onebotAdapter = null;
-  if (hasOneBot) {
-    onebotAdapter = new OneBotAdapter(
-      {
-        wsPort: config.onebotWsPort,
-        wsHost: config.onebotWsHost,
-        wsReverseUrls: config.onebotWsReverseUrls,
-        token: config.onebotToken,
-      },
-      bridge
-    );
-    bridge.setOneBotAdapter(onebotAdapter);
-  }
+  // Milky 协议适配器（始终挂载以便控制台状态统计与 API 调试使用，配置端口后启动监听）
+  const milkyAdapter = new MilkyAdapter(
+    {
+      port: config.milkyPort,
+      host: config.milkyHost,
+      token: config.milkyToken,
+      publicUrl: config.milkyPublicUrl,
+      webhookUrls: config.milkyWebhookUrls,
+    },
+    bridge
+  );
+  bridge.setMilkyAdapter(milkyAdapter);
 
-  // Milky protocol adapter
-  let milkyAdapter = null;
-  if (config.milkyPort) {
-    milkyAdapter = new MilkyAdapter(
-      {
-        port: config.milkyPort,
-        host: config.milkyHost,
-        token: config.milkyToken,
-        webhookUrls: config.milkyWebhookUrls,
-      },
-      bridge
-    );
-    bridge.setMilkyAdapter(milkyAdapter);
-  }
-
-  // Start servers
+  // 启动服务
   await server.start();
-  if (onebotAdapter) await onebotAdapter.start();
-  if (milkyAdapter) await milkyAdapter.start();
+  if (config.milkyPort) await milkyAdapter.start();
 
   // Then initialize NTQQ
   await bridge.init();
