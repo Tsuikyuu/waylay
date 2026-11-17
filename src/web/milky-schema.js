@@ -1,0 +1,265 @@
+"use strict";
+
+// Milky 协议标准 API 目录与请求模板定义（供调试台使用）
+
+window.MILKY_API_SCHEMA = [
+  // ---- 系统与账号 ----
+  {
+    group: "系统与账号",
+    action: "get_login_info",
+    title: "获取登录号信息",
+    desc: "查询当前已登录 QQ 的账号 uin 与 nickname。",
+    template: {},
+  },
+  {
+    group: "系统与账号",
+    action: "get_impl_info",
+    title: "获取协议实现信息",
+    desc: "查询协议端名称、版本、QQ 协议版本与 Milky 协议版本。",
+    template: {},
+  },
+  {
+    group: "系统与账号",
+    action: "get_user_profile",
+    title: "获取用户资料",
+    desc: "按 QQ 号查询指定用户的昵称、签名等公开资料。",
+    template: { user_id: 10001 },
+  },
+  {
+    group: "系统与账号",
+    action: "get_resource_temp_url",
+    title: "获取临时资源链接",
+    desc: "通过接收消息段中的 resource_id 换取富媒体临时访问链接。",
+    template: { resource_id: "" },
+  },
+  {
+    group: "系统与账号",
+    action: "get_cookies",
+    title: "获取 Cookies",
+    desc: "读取当前账号的凭证信息。",
+    template: { domain: "qun.qq.com" },
+  },
+  {
+    group: "系统与账号",
+    action: "get_csrf_token",
+    title: "获取 CSRF Token",
+    desc: "读取接口防伪令牌。",
+    template: {},
+  },
+
+  // ---- 消息收发 ----
+  {
+    group: "消息收发",
+    action: "send_private_message",
+    title: "发送私聊消息",
+    desc: "向指定好友发送 OutgoingSegment 数组，返回 message_seq 与 time。",
+    template: {
+      user_id: 123456789,
+      message: [
+        { type: "text", data: { text: "你好，来自 Waylay 控制台的测试消息" } },
+      ],
+    },
+  },
+  {
+    group: "消息收发",
+    action: "send_group_message",
+    title: "发送群聊消息",
+    desc: "向指定群聊发送 OutgoingSegment 数组，返回 message_seq 与 time。",
+    template: {
+      group_id: 123456789,
+      message: [
+        { type: "text", data: { text: "你好，群消息调试测试" } },
+      ],
+    },
+  },
+  {
+    group: "消息收发",
+    action: "get_message",
+    title: "获取缓存消息",
+    desc: "根据 message_seq 查询内存中已缓存的 IncomingMessage 详情。",
+    template: { message_scene: "group", peer_id: 123456789, message_seq: 1 },
+  },
+  {
+    group: "消息收发",
+    action: "recall_private_message",
+    title: "撤回私聊消息",
+    desc: "根据目标 QQ 号与 message_seq 撤回私聊消息。",
+    template: { user_id: 123456789, message_seq: 1 },
+  },
+  {
+    group: "消息收发",
+    action: "recall_group_message",
+    title: "撤回群聊消息",
+    desc: "根据群号与 message_seq 撤回群消息。",
+    template: { group_id: 123456789, message_seq: 1 },
+  },
+  {
+    group: "消息收发",
+    action: "get_history_messages",
+    title: "获取历史消息",
+    desc: "按会话场景查询历史消息列表。",
+    template: { message_scene: "group", peer_id: 123456789, limit: 20 },
+  },
+  {
+    group: "消息收发",
+    action: "mark_message_as_read",
+    title: "标记消息已读",
+    desc: "将指定会话消息标记为已读。",
+    template: { message_scene: "group", peer_id: 123456789, message_seq: 1 },
+  },
+
+  // ---- 好友管理 ----
+  {
+    group: "好友管理",
+    action: "get_friend_list",
+    title: "获取好友列表",
+    desc: "读取好友实体数组 { friends: FriendEntity[] }。",
+    template: { no_cache: false },
+  },
+  {
+    group: "好友管理",
+    action: "get_friend_info",
+    title: "获取单个好友信息",
+    desc: "查询单个好友实体 { friend: FriendEntity }。",
+    template: { user_id: 123456789, no_cache: false },
+  },
+  {
+    group: "好友管理",
+    action: "send_friend_nudge",
+    title: "发送好友戳一戳",
+    desc: "在私聊窗口对指定好友触发戳一戳动作。",
+    template: { user_id: 123456789, is_self: false },
+  },
+  {
+    group: "好友管理",
+    action: "get_friend_requests",
+    title: "获取好友请求列表",
+    desc: "读取待处理的好友申请列表。",
+    template: { limit: 20, is_filtered: false },
+  },
+  {
+    group: "好友管理",
+    action: "accept_friend_request",
+    title: "同意好友申请",
+    desc: "通过指定 initiator_uid 的好友添加请求。",
+    template: { initiator_uid: "", is_filtered: false },
+  },
+  {
+    group: "好友管理",
+    action: "reject_friend_request",
+    title: "拒绝好友申请",
+    desc: "拒绝指定 initiator_uid 的好友添加请求。",
+    template: { initiator_uid: "", is_filtered: false, reason: "" },
+  },
+
+  // ---- 群组查询与管理 ----
+  {
+    group: "群组查询与管理",
+    action: "get_group_list",
+    title: "获取群列表",
+    desc: "读取当前加入的全部群实体 { groups: GroupEntity[] }。",
+    template: { no_cache: false },
+  },
+  {
+    group: "群组查询与管理",
+    action: "get_group_info",
+    title: "获取群信息",
+    desc: "查询指定群实体 { group: GroupEntity }。",
+    template: { group_id: 123456789, no_cache: false },
+  },
+  {
+    group: "群组查询与管理",
+    action: "get_group_member_list",
+    title: "获取群成员列表",
+    desc: "读取指定群的全部成员实体 { members: GroupMemberEntity[] }。",
+    template: { group_id: 123456789, no_cache: false },
+  },
+  {
+    group: "群组查询与管理",
+    action: "get_group_member_info",
+    title: "获取群成员信息",
+    desc: "查询指定群内特定成员实体 { member: GroupMemberEntity }。",
+    template: { group_id: 123456789, user_id: 10001, no_cache: false },
+  },
+  {
+    group: "群组查询与管理",
+    action: "send_group_nudge",
+    title: "发送群内戳一戳",
+    desc: "在指定群聊内对目标成员发送戳一戳。",
+    template: { group_id: 123456789, user_id: 10001 },
+  },
+  {
+    group: "群组查询与管理",
+    action: "set_group_name",
+    title: "修改群名称",
+    desc: "修改指定群聊的名称（需管理员或群主权限）。",
+    template: { group_id: 123456789, new_group_name: "新的群名称" },
+  },
+  {
+    group: "群组查询与管理",
+    action: "set_group_member_card",
+    title: "设置群成员名片",
+    desc: "修改指定群成员的群名片。",
+    template: { group_id: 123456789, user_id: 10001, card: "新群名片" },
+  },
+  {
+    group: "群组查询与管理",
+    action: "set_group_member_mute",
+    title: "群成员禁言",
+    desc: "禁言指定成员，duration 单位为秒（0 表示解除禁言）。",
+    template: { group_id: 123456789, user_id: 10001, duration: 60 },
+  },
+  {
+    group: "群组查询与管理",
+    action: "set_group_whole_mute",
+    title: "群全体禁言",
+    desc: "开启或关闭全员禁言。",
+    template: { group_id: 123456789, is_mute: true },
+  },
+  {
+    group: "群组查询与管理",
+    action: "set_group_member_admin",
+    title: "设置群管理员",
+    desc: "任命或取消指定成员的管理员身份（需群主权限）。",
+    template: { group_id: 123456789, user_id: 10001, is_set: true },
+  },
+  {
+    group: "群组查询与管理",
+    action: "kick_group_member",
+    title: "踢出群成员",
+    desc: "将成员移出群聊，可选是否拒绝再次申请。",
+    template: { group_id: 123456789, user_id: 10001, reject_add_request: false },
+  },
+  {
+    group: "群组查询与管理",
+    action: "quit_group",
+    title: "退出群聊",
+    desc: "主动退出指定群聊（谨慎操作）。",
+    template: { group_id: 123456789 },
+  },
+  {
+    group: "群组查询与管理",
+    action: "accept_group_request",
+    title: "同意加群请求",
+    desc: "通过指定 notification_seq 的加群或邀请请求。",
+    template: {
+      notification_seq: 1000,
+      notification_type: "join_request",
+      group_id: 123456789,
+      is_filtered: false,
+    },
+  },
+  {
+    group: "群组查询与管理",
+    action: "reject_group_request",
+    title: "拒绝加群请求",
+    desc: "拒绝指定 notification_seq 的加群或邀请请求。",
+    template: {
+      notification_seq: 1000,
+      notification_type: "join_request",
+      group_id: 123456789,
+      is_filtered: false,
+      reason: "不符合入群条件",
+    },
+  },
+];

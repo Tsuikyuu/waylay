@@ -64,9 +64,9 @@ class Bridge {
     const title = data?.tipsTitle || "下线通知";
     const desc  = data?.tipsDesc  || "";
     console.warn(`[bridge] Kicked offline · ${title}${desc ? " · " + desc : ""}`);
-    // Flip login state so /api/status and the dashboard reflect reality.
+    // 重置登录状态
     this.selfInfo = { uin: "", uid: "", nickName: "" };
-    // Drop the stale QR on disk so /qrcode stops returning the old PNG.
+    // 删除磁盘上过期的二维码图片，避免 /qrcode 返回旧图
     try { fs.unlinkSync("/tmp/qrcode.png"); } catch (_) {}
 
     // Recover: without this, a kick leaves the bridge offline forever (no new
@@ -566,20 +566,50 @@ class Bridge {
     });
   }
 
-  /**
-   * Actively request a fresh login QR code. Used by the web console's
-   * "refresh QR" button so it produces a new code instead of re-reading a
-   * (possibly deleted) file on disk. Returns whether the request was issued.
-   */
+  /** 主动请求生成新的登录二维码 */
   requestQRCode() {
     if (!this.loginService) return false;
     try {
       this.loginService.getQRCodePicture();
       return true;
     } catch (e) {
-      console.error("[bridge] requestQRCode failed:", e);
+      console.error("[bridge] 请求刷新二维码失败:", e);
       return false;
     }
+  }
+
+  /** 获取本机历史登录账号列表，供控制台快速登录使用 */
+  async getLoginCandidates() {
+    if (!this.loginService || !this.profile) return [];
+    try {
+      const r = await this.loginService.getLoginList();
+      if (!r || r.result !== 0) return [];
+      const list = firstPresent(r, this.profile.loginListFields) || [];
+      const items = [];
+      for (let i = 0; i < list.length; i++) {
+        const entry = list[i];
+        const rawUin = firstPresent(entry, this.profile.uinFields);
+        const uin = typeof rawUin === "string"
+          ? rawUin
+          : (typeof rawUin === "number" ? JSON.stringify(rawUin) : "");
+        if (!uin) continue;
+        const nick = (entry && (entry.nickName || entry.nick || "")) || "";
+        items.push({ uin, nick });
+      }
+      return items;
+    } catch (e) {
+      console.error("[bridge] 获取历史登录列表失败:", e);
+      return [];
+    }
+  }
+
+  /** 按指定 QQ 号触发快速登录 */
+  quickLoginByUin(uin) {
+    if (!this.loginService || typeof uin !== "string" || uin.length === 0) {
+      return false;
+    }
+    this._quickLogin(uin);
+    return true;
   }
 
   // --- Helpers ---

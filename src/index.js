@@ -1,5 +1,8 @@
 "use strict";
 
+const { installLogger } = require("./logger");
+installLogger();
+
 const { Bridge } = require("./bridge");
 const { BridgeServer } = require("./server");
 const { MilkyAdapter } = require("./milky/adapter");

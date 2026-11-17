@@ -1,196 +1,517 @@
-<!doctype html>
-<html lang="zh-CN" data-theme="light"
-      data-i18n-title="doc.title.landing"
-      data-i18n-meta-description="meta.description">
+<!DOCTYPE html>
+<html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>waylay» bridge</title>
-  <meta name="description" content="">
-  <link rel="icon" href="/assets/favicon.svg">
-  <link rel="stylesheet" href="/static/design.css">
-  <link rel="stylesheet" href="/static/app.css">
-  <script defer src="/static/i18n.js"></script>
-  <script defer src="/static/app.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Waylay Console</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <script>
+    // 首屏无闪烁主题初始化
+    (function () {
+      try {
+        var saved = localStorage.getItem("waylay-theme");
+        var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (saved === "dark" || (!saved && prefersDark)) {
+          document.documentElement.classList.add("dark");
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/web/styles.css" />
 </head>
 <body>
-<div class="wl-shell">
-
-  <!-- Top nav -->
-  <header class="wl-topnav">
-    <div class="wl-topnav__brand">
-      <a href="/" class="wl-topnav__logo" aria-label="Waylay home">
-        <svg width="28" height="28" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-          <rect x="2" y="2" width="60" height="60" rx="3" stroke="currentColor" stroke-width="2.5"/>
-          <path d="M14 22 L28 32 L14 42" stroke="currentColor" stroke-width="3.5" fill="none"/>
-          <path d="M30 22 L44 32 L30 42" stroke="var(--wl-accent)" stroke-width="3.5" fill="none"/>
-        </svg>
-        <span class="wl-topnav__wordmark">waylay<span class="accent">»</span></span>
-      </a>
-      <nav class="wl-topnav__nav">
-        <a href="/" class="wl-topnav__link is-active" data-i18n="nav.home">首页</a>
-        <a href="/docs"
-           class="wl-topnav__link"
-           target="_blank" rel="noopener"
-           data-i18n="nav.docs"
-           data-i18n-attr-title="nav.docsTitle">文档</a>
-        <a href="/qrcode" class="wl-topnav__link" data-i18n="nav.qrcode">/qrcode</a>
-      </nav>
-    </div>
-    <div class="wl-topnav__right">
-      <span class="wl-badge"><span class="wl-dot wl-dot--live"></span><span data-status="version">…</span></span>
-      <button class="wl-topnav__icon-btn" data-action="toggle-lang"
-              data-i18n-attr-aria-label="nav.toggleLang"
-              data-i18n-attr-title="nav.toggleLang">
-        <span data-lang-label style="font-family:var(--wl-font-mono);font-size:12px;font-weight:600">EN</span>
-      </button>
-      <button class="wl-topnav__icon-btn" data-action="toggle-theme"
-              data-i18n-attr-aria-label="nav.toggleTheme"
-              data-i18n-attr-title="nav.toggleTheme">
-        <svg data-theme-icon="moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><path d="M20 14 A8 8 0 1 1 10 4 A6 6 0 0 0 20 14Z"/></svg>
-        <svg data-theme-icon="sun" hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4" y1="12" x2="2" y2="12"/><line x1="22" y1="12" x2="20" y2="12"/><line x1="5" y1="5" x2="7" y2="7"/><line x1="17" y1="17" x2="19" y2="19"/><line x1="5" y1="19" x2="7" y2="17"/><line x1="17" y1="7" x2="19" y2="5"/></svg>
-      </button>
-      <a class="wl-btn" href="https://github.com/Micuks/waylay-qq-bridge" target="_blank" rel="noopener">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 A10 10 0 0 0 8.84 21.5 C9.34 21.58 9.5 21.27 9.5 21 V19.31 C6.73 19.91 6.14 17.97 6.14 17.97 C5.68 16.81 5.03 16.5 5.03 16.5 C4.12 15.88 5.1 15.9 5.1 15.9 C6.1 15.97 6.63 16.93 6.63 16.93 C7.5 18.45 8.97 18.01 9.54 17.75 C9.63 17.1 9.89 16.66 10.17 16.42 C7.95 16.17 5.62 15.31 5.62 11.5 C5.62 10.39 6 9.5 6.65 8.79 C6.55 8.54 6.2 7.5 6.75 6.15 C6.75 6.15 7.59 5.88 9.5 7.17 A9.37 9.37 0 0 1 12 6.84 C12.85 6.85 13.71 6.96 14.5 7.17 C16.41 5.88 17.25 6.15 17.25 6.15 C17.8 7.5 17.45 8.54 17.35 8.79 C18 9.5 18.38 10.39 18.38 11.5 C18.38 15.32 16.04 16.17 13.81 16.41 C14.17 16.72 14.5 17.33 14.5 18.26 V21 C14.5 21.27 14.66 21.59 15.17 21.5 A10 10 0 0 0 12 2 Z"/></svg>
-        <span data-i18n="nav.github">GitHub</span>
-      </a>
-    </div>
-  </header>
-
-  <!-- Hero -->
-  <section class="wl-hero-section">
-    <pre class="wl-ornament" aria-hidden="true">Bot Framework ←→ Waylay ←→ wrapper.node ←→ QQ Server
-BRIDGE_PORT=13000
-ONEBOT_WS_PORT=3001
-MILKY_HTTP_PORT=8082
-AUTO_LOGIN_QQ=…
-[server] Listening on 0.0.0.0:13000
-[bridge] OneBot v11 WS ready
-[milky]  HTTP/WS/SSE ready · :8082
-get_login_info            0.7ms
-get_friend_list           1.0ms
-get_group_list            0.8ms
-get_group_member_list     1.0ms
-send_group_msg          403.0ms</pre>
-    <div class="wl-hero-section__inner">
-      <span class="wl-badge wl-badge--accent" data-i18n="hero.live">实时 · 当前实例</span>
-      <h1 class="wl-hero wl-hero-section__title">waylay<span class="accent">»</span> bridge</h1>
-      <p class="wl-hero-section__lede" data-i18n="hero.lede">轻量、高速、纯 JS 的 NTQQ 无头桥接，内置 OneBot v11 + Milky 协议支持。本控制台由 Bridge 进程直接提供。</p>
-      <div class="wl-hero-section__cta">
-        <a class="wl-btn wl-btn--primary" href="/qrcode">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 4 L19 12 L5 20 Z"/></svg>
-          <span data-i18n="hero.cta.login">登录二维码</span>
-        </a>
-        <a class="wl-btn" href="/docs" target="_blank" rel="noopener" data-i18n="hero.cta.docs">阅读文档</a>
-      </div>
-      <div class="wl-hero-section__badges">
-        <span class="wl-badge">Apache-2.0</span>
-        <span class="wl-badge" data-i18n="hero.badges.node">Node ≥18</span>
-        <span class="wl-badge" data-status="qq_version">QQ 3.2.31</span>
-        <span class="wl-badge wl-badge--accent">OneBot v11</span>
-        <span class="wl-badge wl-badge--accent">Milky v1</span>
-        <span class="wl-badge wl-badge--ok" data-i18n="hero.badges.deps">依赖 · 1 (ws)</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- Live status -->
-  <section class="wl-section">
-    <span class="wl-micro" data-i18n="status.micro">实时状态 · 每 4 秒轮询</span>
-    <h2 data-i18n="status.h">Bridge 状态</h2>
-    <div class="wl-status-grid">
-      <div class="wl-card wl-card--flush">
-        <div class="wl-card__header">
-          <span><span class="wl-dot wl-dot--live"></span><span data-i18n="status.kernel">内核</span></span>
-          <span class="wl-micro" data-i18n="status.kernel.col">登录</span>
+  <div class="app-shell">
+    <!-- 左侧导航栏 -->
+    <aside class="sidebar" id="sidebar">
+      <div>
+        <div class="sidebar-brand">
+          <div class="brand-identity">
+            <span class="brand-mark">W</span>
+            <span class="brand-title">Waylay</span>
+          </div>
+          <span class="sh-badge sh-badge--outline sh-badge--mono" id="brand-version">v-</span>
         </div>
-        <div style="padding: 4px 16px 12px">
-          <div class="wl-status-row"><span class="wl-status-row__label" data-i18n="status.row.version">版本</span><span class="wl-status-row__value" data-status="version">—</span></div>
-          <div class="wl-status-row"><span class="wl-status-row__label" data-i18n="status.row.uptime">运行时长</span><span class="wl-status-row__value" data-status="uptime">—</span></div>
-          <div class="wl-status-row"><span class="wl-status-row__label" data-i18n="status.row.login">登录态</span><span class="wl-status-row__value" data-status="login">—</span></div>
-          <div class="wl-status-row"><span class="wl-status-row__label" data-i18n="status.row.bport">Bridge 端口</span><span class="wl-status-row__value" data-status="bridge_port">—</span></div>
-          <div class="wl-status-row"><span class="wl-status-row__label" data-i18n="status.row.wsclients">WS 客户端</span><span class="wl-status-row__value" data-status="ws_clients">—</span></div>
-        </div>
+
+        <nav class="sidebar-nav" aria-label="主导航">
+          <div class="sidebar-section-label">控制台</div>
+          <button type="button" class="nav-item is-active" data-nav="overview">
+            <span class="nav-item-left">
+              <span data-icon="overview"></span>
+              <span>运行状态监控</span>
+            </span>
+          </button>
+          <button type="button" class="nav-item" data-nav="login">
+            <span class="nav-item-left">
+              <span data-icon="qrcode"></span>
+              <span>扫码与快速登录</span>
+            </span>
+            <span class="sh-badge sh-badge--secondary" id="nav-login-badge">检测中</span>
+          </button>
+          <button type="button" class="nav-item" data-nav="logs">
+            <span class="nav-item-left">
+              <span data-icon="terminal"></span>
+              <span>实时日志跟踪</span>
+            </span>
+          </button>
+          <button type="button" class="nav-item" data-nav="milky">
+            <span class="nav-item-left">
+              <span data-icon="api"></span>
+              <span>Milky 调试台</span>
+            </span>
+          </button>
+        </nav>
       </div>
-      <div class="wl-card wl-card--flush">
-        <div class="wl-card__header">
-          <span><span class="wl-dot wl-dot--ok"></span><span data-i18n="status.protocols">协议</span></span>
-          <span class="wl-micro" data-i18n="status.protocols.col">适配器</span>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-conn">
+          <span class="conn-indicator">
+            <span class="status-dot" id="conn-dot"></span>
+            <span id="conn-label">连接检测中</span>
+          </span>
+          <span id="sidebar-uptime" style="font-family: var(--font-mono);">--</span>
         </div>
-        <div style="padding: 4px 16px 12px">
-          <div class="wl-status-row"><span class="wl-status-row__label" data-i18n="status.row.onebot">OneBot v11</span><span class="wl-status-row__value" data-status="onebot">—</span></div>
-          <div class="wl-status-row"><span class="wl-status-row__label" data-i18n="status.row.onebotc">OneBot 客户端</span><span class="wl-status-row__value" data-status="onebot_clients">—</span></div>
-          <div class="wl-status-row"><span class="wl-status-row__label" data-i18n="status.row.milky">Milky</span><span class="wl-status-row__value" data-status="milky">—</span></div>
-          <div class="wl-status-row"><span class="wl-status-row__label" data-i18n="status.row.milkyc">Milky 客户端</span><span class="wl-status-row__value" data-status="milky_clients">—</span></div>
+        <div id="theme-tabs-mount" style="display: flex;"></div>
+      </div>
+    </aside>
+
+    <!-- 右侧主工作区 -->
+    <div class="main-area">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button type="button" class="sh-btn sh-btn--outline sh-btn--icon mobile-menu-btn" id="mobile-menu-btn" aria-label="打开菜单">
+            <span data-icon="menu"></span>
+          </button>
+          <span class="topbar-title" id="topbar-title">运行状态监控</span>
+          <span class="topbar-sep">/</span>
+          <span class="topbar-subtitle" id="topbar-subtitle">实时查看内核指标、内存负载与协议接入状态</span>
         </div>
+        <div class="topbar-right">
+          <span class="sh-badge sh-badge--outline" id="topbar-account-pill">未登录</span>
+          <button type="button" class="sh-btn sh-btn--outline sh-btn--sm" id="btn-manual-refresh">
+            <span data-icon="refresh"></span>
+            <span>刷新状态</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="view-container">
+        <!-- 1. 运行状态监控视图 -->
+        <section class="view-panel is-active" id="view-overview">
+          <div class="kpi-grid">
+            <div class="sh-card kpi-card">
+              <div class="kpi-top">
+                <span>QQ 会话状态</span>
+                <span data-icon="user"></span>
+              </div>
+              <div class="kpi-value" id="kpi-login-state">--</div>
+              <div class="kpi-sub" id="kpi-login-sub">等待状态同步...</div>
+            </div>
+
+            <div class="sh-card kpi-card">
+              <div class="kpi-top">
+                <span>Milky 协议流量</span>
+                <span data-icon="activity"></span>
+              </div>
+              <div class="kpi-value" id="kpi-milky-traffic">0 / 0</div>
+              <div class="kpi-sub" id="kpi-milky-clients">事件推送 / API 调用</div>
+            </div>
+
+            <div class="sh-card kpi-card">
+              <div class="kpi-top">
+                <span>进程内存 (RSS)</span>
+                <span data-icon="cpu"></span>
+              </div>
+              <div class="kpi-value" id="kpi-mem-rss">-- MB</div>
+              <div class="kpi-sub" id="kpi-cache-counts">缓存 0 好友 · 0 群聊</div>
+            </div>
+
+            <div class="sh-card kpi-card">
+              <div class="kpi-top">
+                <span>持续运行时长</span>
+                <span data-icon="layers"></span>
+              </div>
+              <div class="kpi-value" id="kpi-uptime">--</div>
+              <div class="kpi-sub" id="kpi-platform">PID --</div>
+            </div>
+          </div>
+
+          <div class="overview-cols">
+            <!-- 系统与内核规格 -->
+            <div class="sh-card">
+              <div class="sh-card-header">
+                <div>
+                  <h2 class="sh-card-title">系统与 NTQQ 内核规格</h2>
+                  <p class="sh-card-desc">底层 wrapper.node 适配配置与 Node.js 堆内存指标</p>
+                </div>
+                <span class="sh-badge sh-badge--secondary sh-badge--mono" id="ov-qq-ver">QQ --</span>
+              </div>
+              <div class="sh-card-content">
+                <div class="kv-list">
+                  <div class="kv-row">
+                    <span class="kv-label">Waylay 服务版本</span>
+                    <span class="kv-val" id="ov-server-ver">--</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-label">NTQQ 适配配置档</span>
+                    <span class="kv-val" id="ov-profile">--</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-label">内核会话模式</span>
+                    <span class="kv-val" id="ov-session-mode">--</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-label">掉线自动重登</span>
+                    <span class="kv-val" id="ov-auto-relogin">--</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-label">Node.js 运行时</span>
+                    <span class="kv-val" id="ov-node-ver">--</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-label">累计消息序号 (seq)</span>
+                    <span class="kv-val" id="ov-seq-counter">0</span>
+                  </div>
+                </div>
+
+                <div class="sh-sep"></div>
+                <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                  <span style="color: var(--muted-foreground);">V8 堆内存使用率</span>
+                  <span style="font-family: var(--font-mono);" id="ov-heap-label">0 / 0 MB</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" id="ov-heap-bar" style="width: 0%;"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 协议端点与连接详情 -->
+            <div class="sh-card">
+              <div class="sh-card-header">
+                <div>
+                  <h2 class="sh-card-title">协议接入端点与连接状态</h2>
+                  <p class="sh-card-desc">点击右侧复制按钮可快速拷贝接入地址至下游 Bot 框架</p>
+                </div>
+                <span class="sh-badge sh-badge--outline" id="ov-milky-badge">检测中</span>
+              </div>
+              <div class="sh-card-content">
+                <div id="ov-endpoints-list"></div>
+
+                <div class="sh-sep"></div>
+                <div class="kv-list">
+                  <div class="kv-row">
+                    <span class="kv-label">Bridge WS 在线客户端</span>
+                    <span class="kv-val" id="ov-bridge-ws">0</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-label">Milky WS / SSE 在线客户端</span>
+                    <span class="kv-val" id="ov-milky-conns">0 WS / 0 SSE</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-label">Milky Webhook 推送目标数</span>
+                    <span class="kv-val" id="ov-milky-webhooks">0</span>
+                  </div>
+                  <div class="kv-row">
+                    <span class="kv-label">Milky Token 鉴权保护</span>
+                    <span class="kv-val" id="ov-milky-auth">--</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. 扫码与快速登录视图 -->
+        <section class="view-panel" id="view-login">
+          <div class="login-grid">
+            <!-- 扫码卡片 -->
+            <div class="sh-card">
+              <div class="sh-card-header">
+                <div>
+                  <h2 class="sh-card-title">手机 QQ 扫码登录</h2>
+                  <p class="sh-card-desc">使用手机 QQ 扫描下方二维码完成内核授权登录</p>
+                </div>
+                <span class="sh-badge sh-badge--secondary" id="qr-status-badge">等待中</span>
+              </div>
+              <div class="sh-card-content" style="text-align: center;">
+                <div class="qr-stage" id="qr-stage">
+                  <div class="qr-placeholder" id="qr-placeholder">正在检测登录二维码...</div>
+                  <img id="qr-image" alt="登录二维码" style="display: none;" />
+                </div>
+                <div style="font-size: 12.5px; color: var(--muted-foreground); margin-bottom: 14px;" id="qr-hint-text">
+                  二维码具有时效性，若失效请点击下方按钮重新生成
+                </div>
+                <div style="display: flex; justify-content: center; gap: 8px;">
+                  <button type="button" class="sh-btn sh-btn--primary" id="btn-refresh-qr">
+                    <span data-icon="refresh"></span>
+                    <span>生成 / 刷新二维码</span>
+                  </button>
+                  <button type="button" class="sh-btn sh-btn--outline" id="btn-copy-qr-url">
+                    <span data-icon="copy"></span>
+                    <span>复制图片链接</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 当前账号与快速登录 -->
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+              <div class="sh-card">
+                <div class="sh-card-header">
+                  <div>
+                    <h2 class="sh-card-title">当前在线账号</h2>
+                    <p class="sh-card-desc">内核当前绑定的登录会话身份信息</p>
+                  </div>
+                </div>
+                <div class="sh-card-content">
+                  <div class="account-banner">
+                    <div class="account-avatar" id="login-avatar-box">?</div>
+                    <div style="min-width: 0; flex: 1;">
+                      <div style="font-weight: 600; font-size: 15px;" id="login-nick">尚未登录</div>
+                      <div style="font-family: var(--font-mono); font-size: 12.5px; color: var(--muted-foreground); margin-top: 2px;" id="login-uin">
+                        请通过左侧扫码或下方历史凭证快速登录
+                      </div>
+                    </div>
+                    <span class="sh-badge sh-badge--outline" id="login-online-pill">离线</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sh-card">
+                <div class="sh-card-header">
+                  <div>
+                    <h2 class="sh-card-title">免扫码快速登录</h2>
+                    <p class="sh-card-desc">若当前数据卷曾登录过账号，可直接选用历史记录或输入 QQ 号快速恢复会话</p>
+                  </div>
+                  <button type="button" class="sh-btn sh-btn--ghost sh-btn--sm" id="btn-reload-accounts">
+                    <span data-icon="refresh"></span>
+                    <span>读取记录</span>
+                  </button>
+                </div>
+                <div class="sh-card-content">
+                  <div class="form-stack">
+                    <div>
+                      <label class="field-label">本机已保存的历史账号</label>
+                      <div id="quick-login-select-mount"></div>
+                    </div>
+                    <div>
+                      <label class="field-label" for="quick-login-input">目标登录 QQ 号 (UIN)</label>
+                      <div style="display: flex; gap: 8px;">
+                        <input id="quick-login-input" type="text" class="sh-input sh-input--mono" placeholder="例如 123456789" />
+                        <button type="button" class="sh-btn sh-btn--primary" id="btn-trigger-quick-login">
+                          立即快速登录
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. 实时日志跟踪视图 -->
+        <section class="view-panel is-fullheight" id="view-logs">
+          <div class="logs-toolbar">
+            <div class="logs-filters">
+              <div class="sh-input-wrap" style="width: 240px;">
+                <span class="sh-input-icon" data-icon="search"></span>
+                <input type="text" class="sh-input has-icon" id="log-search-input" placeholder="搜索日志内容或关键字..." />
+              </div>
+              <div id="log-level-select-mount"></div>
+              <div id="log-tag-select-mount"></div>
+              <span class="sh-badge sh-badge--secondary sh-badge--mono" id="log-count-badge">0 条</span>
+              <span class="sh-badge sh-badge--outline" id="log-stream-badge">连接中</span>
+            </div>
+
+            <div class="logs-actions">
+              <div id="log-autoscroll-mount"></div>
+              <button type="button" class="sh-btn sh-btn--outline sh-btn--sm" id="btn-toggle-log-pause">
+                <span data-icon="pause"></span>
+                <span id="label-log-pause">暂停</span>
+              </button>
+              <button type="button" class="sh-btn sh-btn--outline sh-btn--sm" id="btn-copy-logs">
+                <span data-icon="copy"></span>
+                <span>复制</span>
+              </button>
+              <button type="button" class="sh-btn sh-btn--outline sh-btn--sm" id="btn-clear-logs">
+                <span data-icon="trash"></span>
+                <span>清空</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="logs-viewport" id="logs-viewport">
+            <div class="empty-state">暂无日志记录</div>
+          </div>
+        </section>
+
+        <!-- 4. Milky 调试台视图 -->
+        <section class="view-panel is-fullheight" id="view-milky">
+          <div class="playground-head">
+            <div id="milky-subtabs-mount"></div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 12px; color: var(--muted-foreground);">快捷键：Ctrl/Cmd + Enter 发送调用</span>
+            </div>
+          </div>
+
+          <!-- 子面板 A：API 在线调试器 -->
+          <div class="playground-body" id="milky-pane-api">
+            <!-- 左：API 分类列表 -->
+            <div class="sh-card api-catalog">
+              <div class="api-catalog-search">
+                <div class="sh-input-wrap">
+                  <span class="sh-input-icon" data-icon="search"></span>
+                  <input type="text" class="sh-input has-icon" id="api-search-input" placeholder="搜索 Milky API..." />
+                </div>
+              </div>
+              <div class="api-catalog-list" id="api-catalog-list"></div>
+            </div>
+
+            <!-- 中：请求参数构造 -->
+            <div class="sh-card req-pane">
+              <div class="pane-toolbar">
+                <span style="font-weight: 600; font-size: 13.5px;">请求参数构造</span>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" class="sh-btn sh-btn--ghost sh-btn--sm" id="btn-format-json">
+                    <span data-icon="braces"></span>
+                    <span>格式化</span>
+                  </button>
+                  <button type="button" class="sh-btn sh-btn--ghost sh-btn--sm" id="btn-reset-template">
+                    重置模板
+                  </button>
+                </div>
+              </div>
+
+              <div class="pane-scroll">
+                <div>
+                  <label class="field-label" for="api-action-input">API 动作名称 (Action)</label>
+                  <input type="text" id="api-action-input" class="sh-input sh-input--mono" value="get_login_info" />
+                  <div style="font-size: 12px; color: var(--muted-foreground); margin-top: 5px;" id="api-action-desc">
+                    查询当前已登录 QQ 的账号 UIN 与昵称。
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                  <div>
+                    <label class="field-label">调用通道</label>
+                    <div id="api-mode-select-mount"></div>
+                  </div>
+                  <div>
+                    <label class="field-label" for="api-token-input">Bearer Token (可选)</label>
+                    <div class="sh-input-wrap">
+                      <input type="password" id="api-token-input" class="sh-input sh-input--mono has-action" placeholder="MILKY_TOKEN" />
+                      <button type="button" class="sh-btn sh-btn--ghost sh-btn--icon sh-input-action" id="btn-toggle-token" aria-label="显示或隐藏 Token">
+                        <span data-icon="eye"></span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="flex: 1; display: flex; flex-direction: column;">
+                  <label class="field-label" for="api-params-editor">JSON 请求载荷 (Params)</label>
+                  <textarea id="api-params-editor" class="sh-textarea" style="flex: 1; min-height: 200px;" spellcheck="false">{}</textarea>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; gap: 8px;">
+                  <button type="button" class="sh-btn sh-btn--outline" id="btn-copy-curl">
+                    <span data-icon="copy"></span>
+                    <span>复制 cURL</span>
+                  </button>
+                  <button type="button" class="sh-btn sh-btn--primary" id="btn-send-api">
+                    <span data-icon="send"></span>
+                    <span>发送请求</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 右：响应结果与历史 -->
+            <div class="sh-card res-pane">
+              <div class="pane-toolbar">
+                <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                  <span style="font-weight: 600; font-size: 13.5px;">响应结果</span>
+                  <span class="sh-badge sh-badge--outline sh-badge--mono" id="res-http-badge">等待调用</span>
+                  <span class="sh-badge sh-badge--secondary sh-badge--mono" id="res-time-badge">-- ms</span>
+                </div>
+                <button type="button" class="sh-btn sh-btn--ghost sh-btn--sm" id="btn-copy-res">
+                  <span data-icon="copy"></span>
+                  <span>复制响应</span>
+                </button>
+              </div>
+
+              <div class="pane-scroll" style="padding-bottom: 10px;">
+                <pre class="json-viewer" id="res-json-viewer">// 点击左侧选择任意 Milky API 并发送请求，此处将展示返回的 JSON 数据</pre>
+              </div>
+
+              <div class="history-strip">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <span style="font-size: 11px; font-weight: 600; color: var(--muted-foreground);">最近调用记录</span>
+                  <button type="button" class="sh-btn sh-btn--ghost sh-btn--sm" style="height: 22px; padding: 0 6px;" id="btn-clear-history">清空</button>
+                </div>
+                <div id="api-history-list">
+                  <div style="font-size: 12px; color: var(--muted-foreground); padding: 4px 0;">暂无调用记录</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 子面板 B：Milky 实时事件监听 -->
+          <div class="events-layout" id="milky-pane-events" style="display: none;">
+            <div class="sh-card" style="display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
+              <div class="pane-toolbar">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-weight: 600; font-size: 13.5px;">实时事件流</span>
+                  <span class="sh-badge sh-badge--outline" id="milky-ev-stream-badge">未连接</span>
+                </div>
+                <div style="display: flex; gap: 4px;">
+                  <button type="button" class="sh-btn sh-btn--ghost sh-btn--sm" id="btn-pause-events">暂停</button>
+                  <button type="button" class="sh-btn sh-btn--ghost sh-btn--sm" id="btn-clear-events">清空</button>
+                </div>
+              </div>
+              <div style="padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <div id="ev-type-select-mount" style="flex: 1;"></div>
+                <div id="ev-autofollow-mount"></div>
+              </div>
+              <div id="milky-events-list" style="flex: 1; overflow-y: auto;">
+                <div class="empty-state">等待新事件到达...</div>
+              </div>
+            </div>
+
+            <div class="sh-card" style="display: flex; flex-direction: column; min-height: 0; overflow: hidden;">
+              <div class="pane-toolbar">
+                <span style="font-weight: 600; font-size: 13.5px;" id="ev-detail-title">事件 JSON 载荷详情</span>
+                <button type="button" class="sh-btn sh-btn--ghost sh-btn--sm" id="btn-copy-event-json">
+                  <span data-icon="copy"></span>
+                  <span>复制载荷</span>
+                </button>
+              </div>
+              <div class="pane-scroll">
+                <pre class="json-viewer" id="ev-detail-viewer">// 在左侧点击任意捕获到的 Milky 事件以查看完整数据结构</pre>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- 全局自定义确认模态框（shadcn Dialog） -->
+  <div class="sh-dialog-backdrop" id="sh-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="sh-dialog-title">
+    <div class="sh-dialog">
+      <h3 class="sh-dialog-title" id="sh-dialog-title">确认操作</h3>
+      <p class="sh-dialog-desc" id="sh-dialog-desc"></p>
+      <div class="sh-dialog-actions">
+        <button type="button" class="sh-btn sh-btn--outline" id="sh-dialog-cancel">取消</button>
+        <button type="button" class="sh-btn sh-btn--primary" id="sh-dialog-confirm">确认</button>
       </div>
     </div>
-  </section>
+  </div>
 
-  <!-- Stats -->
-  <section class="wl-stats">
-    <div class="wl-stats__cell">
-      <div class="wl-stats__num">~4,000</div>
-      <div class="wl-micro wl-stats__label" data-i18n="stats.lines">行纯 JavaScript</div>
-    </div>
-    <div class="wl-stats__cell">
-      <div class="wl-stats__num">13</div>
-      <div class="wl-micro wl-stats__label" data-i18n="stats.files">源文件数</div>
-    </div>
-    <div class="wl-stats__cell">
-      <div class="wl-stats__num">1</div>
-      <div class="wl-micro wl-stats__label" data-i18n="stats.deps">运行时依赖</div>
-    </div>
-    <div class="wl-stats__cell">
-      <div class="wl-stats__num">0.7ms</div>
-      <div class="wl-micro wl-stats__label" data-i18n="stats.glogin">get_login_info</div>
-    </div>
-  </section>
+  <!-- 全局通知堆叠容器（shadcn Sonner Toast） -->
+  <div class="sh-toast-region" id="sh-toast-region" aria-live="polite"></div>
 
-  <!-- Architecture -->
-  <section class="wl-section">
-    <span class="wl-micro" data-i18n="arch.micro">工作原理</span>
-    <h2 data-i18n-html="arch.h">直连 <code>wrapper.node</code> · 无抽象层</h2>
-    <div class="wl-code">
-      <div class="wl-code__head"><span data-i18n="code.text">TEXT</span><button class="wl-code__copy" data-copy data-i18n="code.copy">复制</button></div>
-<pre>Bot Framework (Yunzai / Koishi)
-        ↓↑
-waylay» bridge
-        ↓↑
-wrapper.node (NTQQ native module)
-        ↓↑
-QQ Server</pre>
-    </div>
-    <p data-i18n="arch.body">
-      Waylay 在 QQ 的 Electron 进程中运行（补丁入口点），直接加载 wrapper.node，并在 WebSocket 端口上暴露 OneBot v11 + Milky。无内存注入，无协议重写，无浏览器侧 UI。
-    </p>
-  </section>
-
-  <!-- Latency -->
-  <section class="wl-section">
-    <span class="wl-micro" data-i18n="lat.micro">查询延迟 · 10 轮平均值</span>
-    <h2 data-i18n="lat.h">极速读取 — 全部来自内存缓存</h2>
-    <table>
-      <thead><tr>
-        <th data-i18n="lat.col.action">Action</th>
-        <th style="text-align:right" data-i18n="lat.col.waylay">Waylay</th>
-        <th style="text-align:right" data-i18n="lat.col.llonebot">LLOneBot</th>
-        <th data-i18n="lat.col.note">备注</th>
-      </tr></thead>
-      <tbody>
-        <tr><td><code>get_login_info</code></td><td style="text-align:right;font-family:var(--wl-font-mono);color:var(--wl-ok);font-weight:600">0.7ms</td><td style="text-align:right;font-family:var(--wl-font-mono);color:var(--wl-fg-3)">6.3ms</td><td></td></tr>
-        <tr><td><code>get_friend_list</code></td><td style="text-align:right;font-family:var(--wl-font-mono);color:var(--wl-ok);font-weight:600">1.0ms</td><td style="text-align:right;font-family:var(--wl-font-mono);color:var(--wl-fg-3)">47.9ms</td><td></td></tr>
-        <tr><td><code>get_group_list</code></td><td style="text-align:right;font-family:var(--wl-font-mono);color:var(--wl-ok);font-weight:600">0.8ms</td><td style="text-align:right;font-family:var(--wl-font-mono);color:var(--wl-fg-3)">27.3ms</td><td></td></tr>
-        <tr><td><code>get_group_member_info</code></td><td style="text-align:right;font-family:var(--wl-font-mono);color:var(--wl-ok);font-weight:600">0.5ms</td><td style="text-align:right;font-family:var(--wl-font-mono);color:var(--wl-fg-3)">12.0ms</td><td></td></tr>
-        <tr><td><code>send_group_msg</code></td><td style="text-align:right;font-family:var(--wl-font-mono)">403ms</td><td style="text-align:right;font-family:var(--wl-font-mono)">457ms</td><td><span style="color:var(--wl-fg-3)" data-i18n="lat.note.qq">QQ 服务器往返延迟</span></td></tr>
-      </tbody>
-    </table>
-  </section>
-
-  <footer class="wl-footer">
-    <span data-i18n="footer.brand">waylay · 无头 ntqq 桥接</span>
-    <span><a href="/docs" target="_blank" rel="noopener" data-i18n="footer.docs">文档</a> · <a href="/qrcode" data-i18n="footer.qr">/qrcode</a> · <a href="/api/status" data-i18n="footer.status">/api/status</a></span>
-  </footer>
-</div>
+  <script src="/web/ui.js"></script>
+  <script src="/web/milky-schema.js"></script>
+  <script src="/web/app.js"></script>
 </body>
 </html>

@@ -4,12 +4,11 @@
 
 # Waylay
 
-**轻量、高速、纯 JS 的 NTQQ 无头桥接，内置 OneBot v11 + Milky 协议支持**
+**轻量、高速、纯 JS 的 NTQQ 无头桥接，内置 Milky 协议支持**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-≥18-green.svg)](https://nodejs.org/)
 [![QQ Version](https://img.shields.io/badge/QQ-3.2.31-blue.svg)](https://im.qq.com/linuxqq/index.shtml)
-[![OneBot v11](https://img.shields.io/badge/OneBot-v11-black.svg)](https://github.com/botuniverse/onebot-11)
 [![Milky](https://img.shields.io/badge/Milky-v1-purple.svg)](#milky-协议支持)
 [![Dependencies](https://img.shields.io/badge/依赖-1_(ws)-brightgreen.svg)](#项目特点)
 
@@ -21,85 +20,54 @@
 
 ## 简介
 
-Waylay 是一个轻量级的 NTQQ 无头桥接工具，使用纯 JavaScript 编写，内置 OneBot v11 协议支持。它直接加载 QQ 的 `wrapper.node` 原生模块与 QQ 内核通信，适合追求简洁部署和低资源占用的场景。
+Waylay 是一个轻量级的 NTQQ 无头桥接工具，使用纯 JavaScript 编写，内置 Milky 协议支持。它直接加载 QQ 的 `wrapper.node` 原生模块与 QQ 内核通信，适合追求简洁部署和低资源占用的场景。
 
 ## 项目特点
 
-- **轻量** — 13 个源文件、~4,000 行纯 JavaScript，仅 1 个运行时依赖 (`ws`)
+- **轻量** — 纯 JavaScript 实现，仅 1 个运行时依赖 (`ws`)
 - **快速查询** — 基于事件驱动的内存缓存，读操作亚毫秒级响应
-- **非阻塞 I/O** — 媒体下载、音视频探测全部异步，不阻塞消息收发
+- **非阻塞 I/O** — 媒体下载全部异步，不阻塞消息收发
 - **简洁架构** — 直接调用 `wrapper.node`，无额外抽象层
 - **低资源占用** — 单进程运行，无额外 WebUI / 数据库 / 日志框架开销
-- **多协议** — 同时支持 OneBot v11 和 Milky 协议，兼容更多框架
-- **开箱即用** — Docker 一键部署，直连 Yunzai / Koishi 等主流框架
+- **Milky 协议** — 内置 Milky 协议支持（HTTP API + WebSocket/SSE/Webhook 事件推送）
 - **快速登录** — 支持 QQ 号快速登录，容器重启免扫码
-- **LLOneBot 兼容** — 同时提供 LLOneBot 兼容的 WebSocket 协议（端口 13000）
-- **Web 控制台** — 内置 Waylay 设计系统的浏览器面板（落地页 + 文档 + 登录二维码 + `/api/status` 实时状态），无需额外服务
+- **桥接协议兼容** — 同时提供底层 Bridge WebSocket 协议（端口 13000）与二维码获取端点 (`/qrcode.png`)
+- **WebUI 控制台** — 内置黑白极简风格管理面板，支持扫码与快速登录、运行状态监控、SSE 实时日志跟踪、Milky API 在线调试与事件流监听
 
 ## 工作原理
 
 ```
-Bot 框架 (Yunzai / Koishi) ←→ Waylay (OneBot v11) ←→ wrapper.node ←→ QQ 服务器
+Bot 框架 ←→ Waylay (Milky) ←→ wrapper.node ←→ QQ 服务器
 ```
 
 1. 在 QQ 的 Electron 进程中运行（补丁 `package.json` 入口点）
 2. 直接加载 NTQQ 的 `wrapper.node` 原生模块
 3. 初始化 QQ 内核、处理登录（扫码或快速登录）
 4. 注册内核事件监听（消息、群组、好友等）
-5. 对外暴露 OneBot v11 WebSocket（端口 3001）和 Bridge WebSocket（端口 13000）
-
-## Web 控制台
-
-`13000` 端口除了承担 Bridge WebSocket 之外，还内置一个基于 Waylay 设计系统的浏览器控制台。无需额外服务、无需打包构建，直接由 Bridge 进程提供静态资源。`BRIDGE_HOST` 默认 `0.0.0.0`，监听全部网卡。
-
-| 路径 | 说明 |
-|------|------|
-| `GET /` | 落地页：品牌 / 实时状态 / 架构 / 延迟对比表（浏览器请求 → HTML，其它请求 → JSON） |
-| `GET /qrcode` | 登录壳层：嵌入二维码 + 状态徽标，自动轮询登录态（curl/脚本仍返回原始 PNG） |
-| `GET /qrcode.png` | 始终返回原始 QR 图片，便于脚本消费 |
-| `GET /api/status` | 实时状态 JSON：版本、运行时长、登录信息、各协议适配器与连接数 |
-| `GET /docs` | 302 重定向到外部文档站（默认 `https://waylay-wiki.micuks.click/`，可用 `WAYLAY_WIKI_URL` 覆盖） |
-| `GET /static/*` `GET /assets/*` | 设计系统 CSS/JS/SVG 静态资源 |
-
-> 完整的指南、协议参考、API 列表、对接框架等长篇文档不放在本控制台里，统一交给 [waylay-wiki.micuks.click](https://waylay-wiki.micuks.click/) 维护，避免双份内容漂移。本控制台只承载和"当前实例"绑定的运营信息。
-
-界面默认中文 (`zh`)；标头按钮可切换中 / 英 (`zh` / `en`)，浅色 (Parchment) / 深色 (Obsidian) 主题同样跟随系统偏好或手动切换，所有偏好都写入 `localStorage`。URL 上加 `?lang=en` / `?theme=dark` 可强制。
-
-### 界面预览
-
-| | |
-|---|---|
-| ![首页 — Parchment 中文](docs/screenshots/landing-light.png) | ![首页 — Obsidian 中文](docs/screenshots/landing-dark.png) |
-| _首页 · Parchment · 中文_ | _首页 · Obsidian · 中文_ |
-| ![首页 — Parchment English](docs/screenshots/landing-light-en.png) | ![登录页 — 等待扫码](docs/screenshots/qrcode-waiting.png) |
-| _首页 · English（点击 EN 切换）_ | _登录页 · 等待扫码_ |
-| ![登录页 — 已登录](docs/screenshots/qrcode-loggedin.png) |  |
-| _登录页 · 已登录_ |  |
-
-更多视觉规范、调色板与组件示例参见 [docs/screenshots/README.md](docs/screenshots/README.md) 与 `src/web/static/design.css`。
+5. 对外暴露 Milky 协议（HTTP/WS/SSE）和 Bridge WebSocket（端口 13000）
 
 ## 安装与部署
 
 ### 方式一：Docker Hub 一键拉取（推荐）
 
 ```bash
-docker run -d --name waylay --privileged \
-  -p 13000:13000 -p 3001:3001 \
+docker run -d --name waylay \
+  -p 13000:13000 -p 8082:8082 \
+  -e MILKY_HTTP_PORT=8082 \
   micuks/waylay:latest
 ```
 
 启动后访问 `http://localhost:13000/qrcode` 扫码登录。
 
-带参数启动（快速登录 + 反向 WS）：
+带参数启动（快速登录 + Token 鉴权）：
 
 ```bash
-docker run -d --name waylay --privileged \
-  -p 13000:13000 -p 3001:3001 \
+docker run -d --name waylay \
+  -p 13000:13000 -p 8082:8082 \
   -e AUTO_LOGIN_QQ=123456789 \
-  -e ONEBOT_WS_PORT=3001 \
-  -e 'ONEBOT_WS_REVERSE_URLS=["ws://host.docker.internal:2536/OneBotv11"]' \
-  --add-host=host.docker.internal:host-gateway \
-  -v waylay_qq:/root/.config/QQ \
+  -e MILKY_HTTP_PORT=8082 \
+  -e MILKY_TOKEN=your_token \
+  -v waylay_qq:/home/node/.config/QQ \
   micuks/waylay:latest
 ```
 
@@ -152,10 +120,6 @@ environment:
 | `BRIDGE_PORT` | `13000` | Bridge WebSocket/HTTP 端口 |
 | `BRIDGE_HOST` | `0.0.0.0` | 监听地址 |
 | `AUTO_LOGIN_QQ` | — | 快速登录 QQ 号 |
-| `ONEBOT_WS_PORT` | `0` | OneBot v11 正向 WS 端口（0 = 禁用） |
-| `ONEBOT_WS_HOST` | `0.0.0.0` | OneBot v11 监听地址 |
-| `ONEBOT_WS_REVERSE_URLS` | `[]` | 反向 WS URL 列表（JSON 数组） |
-| `ONEBOT_TOKEN` | — | OneBot v11 鉴权 Token |
 | `MILKY_HTTP_PORT` | `0` | Milky 协议 HTTP/WS/SSE 端口（0 = 禁用） |
 | `MILKY_HOST` | `0.0.0.0` | Milky 监听地址 |
 | `MILKY_TOKEN` | — | Milky 鉴权 Token |
@@ -214,146 +178,17 @@ Waylay:
   Bot 框架 ←→ Waylay ←→ wrapper.node ←→ QQ Server
 ```
 
-## OneBot v11 协议支持
-
-### 连接方式
-
-- **正向 WebSocket** — Bot 框架连接 `ws://host:3001/`
-- **反向 WebSocket** — Waylay 主动连接框架（如 `ws://host:2536/OneBotv11`）
-
-### 支持的 Action
-
-<details>
-<summary>展开查看完整列表</summary>
-
-#### 核心
-
-| Action | 说明 |
-|--------|------|
-| `get_login_info` | 获取登录号信息 |
-| `get_version_info` | 获取版本信息 |
-| `get_status` | 获取运行状态 |
-
-#### 消息
-
-| Action | 说明 |
-|--------|------|
-| `send_msg` | 发送消息（自动判断私聊/群聊） |
-| `send_group_msg` | 发送群消息 |
-| `send_private_msg` | 发送私聊消息 |
-| `delete_msg` | 撤回消息 |
-| `get_msg` | 获取消息详情 |
-| `send_group_forward_msg` | 发送群合并转发（原生合并卡片） |
-| `send_private_forward_msg` | 发送私聊合并转发（原生合并卡片） |
-| `get_forward_msg` | 获取合并转发内容 |
-
-#### 好友/用户
-
-| Action | 说明 |
-|--------|------|
-| `get_friend_list` | 获取好友列表 |
-| `get_stranger_info` | 获取陌生人信息 |
-| `send_like` | 给好友点赞 |
-| `set_friend_add_request` | 处理好友请求 |
-
-#### 群组
-
-| Action | 说明 |
-|--------|------|
-| `get_group_list` | 获取群列表 |
-| `get_group_info` | 获取群信息 |
-| `get_group_member_list` | 获取群成员列表 |
-| `get_group_member_info` | 获取群成员信息 |
-| `set_group_ban` | 禁言群成员 |
-| `set_group_whole_ban` | 全体禁言 |
-| `set_group_kick` | 踢出群成员 |
-| `set_group_admin` | 设置/取消管理员 |
-| `set_group_card` | 设置群名片 |
-| `set_group_name` | 设置群名 |
-| `set_group_leave` | 退群 |
-| `set_group_add_request` | 处理加群请求 |
-| `group_poke` | 群戳一戳 |
-
-#### 群文件
-
-| Action | 说明 |
-|--------|------|
-| `get_group_file_system_info` | 获取群文件系统信息 |
-| `get_group_root_files` | 获取群根目录文件列表 |
-| `get_group_files_by_folder` | 获取群子目录文件列表 |
-| `upload_group_file` | 上传群文件 |
-| `move_group_file` | 移动群文件到指定文件夹 |
-| `delete_group_file` | 删除群文件 |
-| `create_group_file_folder` | 创建群文件夹 |
-| `delete_group_folder` | 删除群文件夹 |
-
-#### 媒体
-
-| Action | 说明 |
-|--------|------|
-| `get_image` | 获取图片 |
-| `get_record` | 获取语音 |
-| `can_send_image` | 检查能否发图 |
-| `can_send_record` | 检查能否发语音 |
-
-</details>
-
-### 支持的事件
-
-| 类型 | 事件 | 说明 |
-|------|------|------|
-| **消息** | `message.group` | 群消息 |
-| | `message.private` | 私聊消息 |
-| **通知** | `notice.group_recall` | 群消息撤回 |
-| | `notice.friend_recall` | 好友消息撤回 |
-| | `notice.group_increase` | 群成员增加 |
-| | `notice.group_decrease` | 群成员减少 |
-| | `notice.group_ban` | 群禁言 |
-| | `notice.group_admin` | 管理员变动 |
-| | `notice.group_upload` | 群文件上传 |
-| | `notice.friend_add` | 好友添加 |
-| | `notice.notify.poke` | 戳一戳 |
-| | `notice.notify.lucky_king` | 运气王 |
-| | `notice.notify.honor` | 群荣誉变更 |
-| **请求** | `request.friend` | 好友请求 |
-| | `request.group.add` | 加群请求 |
-| | `request.group.invite` | 邀请入群 |
-| **元事件** | `meta_event.lifecycle` | 生命周期 |
-| | `meta_event.heartbeat` | 心跳 |
-
-### 支持的消息段
-
-| 类型 | 收 | 发 | 说明 |
-|------|:--:|:--:|------|
-| `text` | ✅ | ✅ | 纯文本 |
-| `at` | ✅ | ✅ | @成员（含 @全体） |
-| `face` | ✅ | ✅ | QQ 表情 |
-| `image` | ✅ | ✅ | 图片（base64/URL/本地路径） |
-| `reply` | ✅ | ✅ | 回复消息 |
-| `record` | ✅ | ✅ | 语音 |
-| `video` | ✅ | ✅ | 视频 |
-| `file` | ✅ | ✅ | 文件 |
-| `json` | ✅ | ✅ | JSON 卡片 |
-| `forward` | ✅ | ✅ | 合并转发 |
-| `dice` | ✅ | ✅ | 骰子 |
-| `rps` | ✅ | ✅ | 猜拳 |
-| `shake` | ✅ | — | 戳一戳 |
-| `mface` | ✅ | — | 商城表情 |
-| `markdown` | ✅ | — | Markdown |
-| `music` | — | ✅ | 音乐分享（自定义） |
-
 ## Milky 协议支持
 
-Waylay 同时支持 Milky 协议，提供 HTTP API + WebSocket/SSE 事件推送。
+Waylay 内置 Milky 协议支持，提供 HTTP API + WebSocket/SSE/Webhook 事件推送。
 
 ### 启用
 
 设置 `MILKY_HTTP_PORT` 环境变量即可启用：
 
 ```bash
-docker run -d --name waylay --privileged \
-  -p 13000:13000 -p 3001:3001 -p 8082:8082 \
-  -e ONEBOT_WS_PORT=3001 \
+docker run -d --name waylay \
+  -p 13000:13000 -p 8082:8082 \
   -e MILKY_HTTP_PORT=8082 \
   micuks/waylay:latest
 ```
