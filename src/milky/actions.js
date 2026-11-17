@@ -379,10 +379,10 @@ handlers.recall_group_message = async (params, bridge, eventTranslator) => {
 handlers.get_message = async (params, bridge, eventTranslator) => {
   const seq = toIdNum(params.message_seq);
   const cached = eventTranslator.getCachedMsg(seq);
-  if (cached) {
-    return { message: cached };
+  if (!cached) {
+    throw new Error("Message not found");
   }
-  return { message: null };
+  return { message: cached };
 };
 
 handlers.get_resource_temp_url = async (params) => {
