@@ -285,16 +285,24 @@ function convertElementToMilky(el, msg, uinByUidResolver, mediaUrlBuilder) {
 
   if (el.marketFaceElement) {
     const mf = el.marketFaceElement;
-    const emojiId = mf.emojiId || "";
+    const emojiId = typeof mf.emojiId === "string" ? mf.emojiId : "";
+    const summary = typeof mf.faceName === "string" && mf.faceName !== "" ? mf.faceName : "[商城表情]";
+    if (emojiId.length < 2) {
+      return { type: "text", data: { text: summary } };
+    }
     const dir = emojiId.substring(0, 2);
+    // 将商城表情输出为 sticker 类型的图片段并使用 300x300.png 明文资源链接，兼容未实现 market_face 的下游适配器
+    const tempUrl = `https://gxh.vip.qq.com/club/item/parcel/item/${dir}/${emojiId}/300x300.png`;
+    recordResourceUrl(emojiId, tempUrl);
     return {
-      type: "market_face",
+      type: "image",
       data: {
-        emoji_id: emojiId,
-        emoji_package_id: toIdNum(mf.emojiPackageId),
-        summary: mf.faceName || "[商城表情]",
-        url: emojiId ? `https://gxh.vip.qq.com/club/item/parcel/item/${dir}/${emojiId}/raw300.gif` : "",
-        key: mf.key || "",
+        resource_id: emojiId,
+        temp_url: tempUrl,
+        width: toIdNum(mf.imageWidth) || 300,
+        height: toIdNum(mf.imageHeight) || 300,
+        summary,
+        sub_type: "sticker",
       },
     };
   }
