@@ -183,8 +183,8 @@ handlers.get_group_member_info = async (params, bridge, eventTranslator) => {
 
 // ---- 消息收发与撤回 API ----
 
-handlers.send_private_message = async (params, bridge, eventTranslator) => {
-  const userIdStr = toIdKey(params.user_id);
+// 将好友或临时会话 QQ 号解析为 NTQQ 内核所需的 peerUid
+async function resolvePrivatePeerUid(userIdStr, bridge, eventTranslator) {
   let peerUid = eventTranslator.getUidByUin(userIdStr);
   if (!peerUid && bridge.session) {
     try {
@@ -209,7 +209,12 @@ handlers.send_private_message = async (params, bridge, eventTranslator) => {
       }
     } catch {}
   }
-  if (!peerUid) peerUid = userIdStr;
+  return peerUid || userIdStr;
+}
+
+handlers.send_private_message = async (params, bridge, eventTranslator) => {
+  const userIdStr = toIdKey(params.user_id);
+  const peerUid = await resolvePrivatePeerUid(userIdStr, bridge, eventTranslator);
   const peer = { chatType: 1, peerUid, guildId: "" };
   const segs = Array.isArray(params.message) ? params.message : (Array.isArray(params.segments) ? params.segments : []);
   return await sendMessage(peer, segs, bridge, eventTranslator);
@@ -383,6 +388,90 @@ handlers.get_message = async (params, bridge, eventTranslator) => {
     throw new Error("Message not found");
   }
   return { message: cached };
+};
+
+handlers.get_history_messages = async (params, bridge, eventTranslator) => {
+  const scene = ensureStr(params.message_scene, "group");
+  const peerIdNum = toIdNum(params.peer_id);
+  const peerIdStr = toIdKey(params.peer_id);
+  if (peerIdNum <= 0 || !peerIdStr) {
+    throw new Error("Invalid peer_id");
+  }
+
+  const rawLimit = toIdNum(params.limit);
+  const limit = rawLimit > 0 ? (rawLimit > 100 ? 100 : rawLimit) : 20;
+  const startSeq = params.start_message_seq !== undefined && params.start_message_seq !== null
+    ? toIdNum(params.start_message_seq)
+    : 0;
+
+  let peer = null;
+  if (scene === "group") {
+    peer = { chatType: 2, peerUid: peerIdStr, guildId: "" };
+  } else if (scene === "friend") {
+    const peerUid = await resolvePrivatePeerUid(peerIdStr, bridge, eventTranslator);
+    peer = { chatType: 1, peerUid, guildId: "" };
+  } else if (scene === "temp") {
+    const peerUid = await resolvePrivatePeerUid(peerIdStr, bridge, eventTranslator);
+    peer = { chatType: 100, peerUid, guildId: "" };
+  } else {
+    throw new Error(`Unsupported message_scene: ${scene}`);
+  }
+
+  let converted = [];
+  const msgService = bridge.session ? bridge.session.getMsgService() : null;
+  if (msgService && typeof msgService.getMsgsIncludeSelf === "function") {
+    try {
+      const fetchCount = limit + 15 > 100 ? 100 : limit + 15;
+      const anchorMsgId = startSeq > 0 ? eventTranslator.resolveSeq(startSeq) : undefined;
+      let res = null;
+      if (startSeq <= 0) {
+        res = await msgService.getMsgsIncludeSelf(peer, "0", fetchCount, true);
+      } else if (anchorMsgId) {
+        res = await msgService.getMsgsIncludeSelf(peer, anchorMsgId, fetchCount, false);
+      } else {
+        const wideCount = fetchCount > 50 ? fetchCount : 50;
+        res = await msgService.getMsgsIncludeSelf(peer, "0", wideCount, true);
+      }
+
+      const rawList = Array.isArray(res?.msgList) ? res.msgList : [];
+      for (let i = 0; i < rawList.length; i++) {
+        const item = eventTranslator.toIncomingMessage(rawList[i], { fallbackPeerId: peerIdStr });
+        if (!item) continue;
+        if (startSeq > 0 && !anchorMsgId && item.message_seq > startSeq) continue;
+        converted.push(item);
+      }
+
+      // getMsgsIncludeSelf 传入锚点向前查询时不含锚点本身，按 Milky 规范补齐有效锚点消息
+      if (startSeq > 0 && anchorMsgId) {
+        const anchorItem = eventTranslator.getCachedMsg(startSeq);
+        if (
+          anchorItem &&
+          anchorItem.message_scene === scene &&
+          anchorItem.peer_id === peerIdNum &&
+          !converted.some((m) => m.message_seq === startSeq)
+        ) {
+          converted.push(anchorItem);
+        }
+      }
+    } catch (e) {
+      console.warn("[milky-actions] get_history_messages 内核查询失败，回退内存缓存:", e.message);
+    }
+  }
+
+  if (converted.length === 0) {
+    converted = eventTranslator.getCachedHistory(scene, peerIdNum, startSeq);
+  }
+
+  if (converted.length > limit) {
+    const startIndex = converted.length - limit;
+    const olderItem = converted[startIndex - 1];
+    const messages = converted.slice(startIndex);
+    return olderItem && olderItem.message_seq > 0
+      ? { messages, next_message_seq: olderItem.message_seq }
+      : { messages };
+  }
+
+  return { messages: converted };
 };
 
 handlers.get_resource_temp_url = async (params) => {
@@ -589,7 +678,6 @@ handlers.reject_group_join_request = handlers.reject_group_request;
 
 // ---- 其余标准接口占位实现 ----
 
-handlers.get_history_messages = async () => ({ messages: [], next_message_seq: 0 });
 handlers.get_forwarded_messages = async () => ({ messages: [] });
 handlers.mark_message_as_read = async () => ({});
 handlers.send_profile_like = async () => ({});
