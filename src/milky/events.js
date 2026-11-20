@@ -17,6 +17,7 @@ class MilkyEventTranslator {
     this._seqCounter = epochOffset > 1000 ? (epochOffset & 0x3fffffff) : 1000;
     this._msgIdToSeq = new Map(); // NTQQ msgId -> seq (number)
     this._seqToMsgId = new Map(); // seq (number) -> NTQQ msgId
+    this._ntSeqToSeq = new Map(); // "${chatType}:${peerKey}:${ntMsgSeq}" -> seq (number)
     this._msgCache = new Map(); // seq -> Milky IncomingMessage
     this._msgNtMeta = new Map(); // seq -> { ntMsgSeq, senderUinStr }
 
@@ -77,6 +78,44 @@ class MilkyEventTranslator {
 
   getCachedNtMeta(seq) {
     return this._msgNtMeta.get(toIdNum(seq));
+  }
+
+  // 记录会话内原生消息序号（msgSeq）到 Milky message_seq 的映射，用于关联引用回复
+  recordNtSeq(chatType, peerKey, ntMsgSeq, seq) {
+    const keyPeer = ensureStr(peerKey, "");
+    const keyNtSeq = ensureStr(ntMsgSeq, "");
+    const seqNum = toIdNum(seq);
+    if (!chatType || keyPeer === "" || keyPeer === "0" || keyNtSeq === "" || keyNtSeq === "0" || seqNum <= 0) {
+      return;
+    }
+    const composite = `${chatType}:${keyPeer}:${keyNtSeq}`;
+    this._ntSeqToSeq.set(composite, seqNum);
+    if (this._ntSeqToSeq.size > 5000) {
+      const oldest = this._ntSeqToSeq.keys().next().value;
+      this._ntSeqToSeq.delete(oldest);
+    }
+  }
+
+  resolveNtSeq(chatType, peerKey, ntMsgSeq) {
+    const keyPeer = ensureStr(peerKey, "");
+    const keyNtSeq = ensureStr(ntMsgSeq, "");
+    if (!chatType || keyPeer === "" || keyPeer === "0" || keyNtSeq === "" || keyNtSeq === "0") {
+      return 0;
+    }
+    return this._ntSeqToSeq.get(`${chatType}:${keyPeer}:${keyNtSeq}`) || 0;
+  }
+
+  // 按会话场景与对端 ID 从内存缓存筛选历史消息（按 message_seq 升序）
+  getCachedHistory(scene, peerIdNum, startSeq) {
+    const matched = [];
+    const upperSeq = toIdNum(startSeq);
+    for (const [seq, item] of this._msgCache.entries()) {
+      if (!item || item.message_scene !== scene || item.peer_id !== peerIdNum) continue;
+      if (upperSeq > 0 && seq > upperSeq) continue;
+      matched.push(item);
+    }
+    matched.sort((a, b) => a.message_seq - b.message_seq);
+    return matched;
   }
 
   recordUinUid(uin, uid) {
@@ -222,11 +261,174 @@ class MilkyEventTranslator {
   _onAddSendMsg(data) {
     const msg = Array.isArray(data) ? data[0] : data;
     if (!msg || !msg.msgId || msg.msgId === "0") return;
-    const seq = this.createSeq(msg.msgId);
-    this._msgNtMeta.set(seq, {
-      ntMsgSeq: ensureStr(msg.msgSeq, "0"),
-      senderUinStr: toIdKey(msg.senderUin || this.bridge.selfInfo.uin || "0"),
-    });
+    this.toIncomingMessage(msg);
+  }
+
+  // 将单条 NTQQ 消息对象转换为 Milky IncomingMessage 并写入缓存；灰条或已撤回消息返回 null
+  toIncomingMessage(msg, options) {
+    if (!msg || !msg.msgId || msg.msgId === "0") return null;
+    const isRecordCopy = options && options.isRecordCopy === true;
+    const fallbackPeerId = options && options.fallbackPeerId ? options.fallbackPeerId : "";
+
+    const recallStr = ensureStr(msg.recallTime, "0");
+    if (recallStr !== "" && recallStr !== "0") return null;
+
+    if (msg.senderUin && msg.senderUid) {
+      this.recordUinUid(msg.senderUin, msg.senderUid);
+    }
+    const groupPeerRaw = toIdNum(msg.peerUin) > 0 ? msg.peerUin : (msg.chatType === 2 ? msg.peerUid : "");
+    if (msg.chatType === 2 && msg.senderUin && groupPeerRaw) {
+      this.recordGroupMember(
+        groupPeerRaw,
+        msg.senderUin,
+        msg.senderUid,
+        msg.sendNickName,
+        msg.senderMemberName || msg.sendMemberName,
+        msg.sendMemberRole
+      );
+    }
+    if (msg.chatType === 1 && msg.peerUid && msg.peerUin) {
+      this.recordUinUid(msg.peerUin, msg.peerUid);
+    }
+
+    if (msg.msgType === 5) return null;
+
+    let resolvedSenderUin = toIdKey(msg.senderUin);
+    if ((!resolvedSenderUin || resolvedSenderUin === "0") && msg.senderUid) {
+      const mappedSender = this.getUinByUid(msg.senderUid);
+      if (mappedSender) {
+        resolvedSenderUin = mappedSender;
+      } else if (this.bridge.selfInfo.uid && msg.senderUid === this.bridge.selfInfo.uid) {
+        resolvedSenderUin = toIdKey(this.bridge.selfInfo.uin);
+      }
+    }
+
+    let peerKey = "";
+    if (msg.chatType === 2) {
+      peerKey = toIdKey(groupPeerRaw || fallbackPeerId);
+    } else if (msg.chatType === 1 || msg.chatType === 100) {
+      const candidatePeer = toIdNum(msg.peerUin) > 0
+        ? msg.peerUin
+        : (this.getUinByUid(msg.peerUid) || fallbackPeerId || resolvedSenderUin);
+      peerKey = toIdKey(candidatePeer);
+    }
+
+    // 先确保内嵌引用副本（msg.records）可被解析为稳定的 message_seq
+    if (!isRecordCopy && Array.isArray(msg.records)) {
+      for (let r = 0; r < msg.records.length; r++) {
+        const rec = msg.records[r];
+        if (!rec || !rec.msgId) continue;
+        const recNtSeq = ensureStr(rec.msgSeq, "0");
+        if (this.resolveNtSeq(rec.chatType || msg.chatType, peerKey, recNtSeq) <= 0) {
+          this.toIncomingMessage(rec, { isRecordCopy: true, fallbackPeerId: peerKey });
+        }
+      }
+    }
+
+    const ntMsgSeq = ensureStr(msg.msgSeq, "0");
+    const msgIdStr = ensureStr(msg.msgId, "");
+    let seq = 0;
+    if (msgIdStr !== "" && msgIdStr !== "0" && this._msgIdToSeq.has(msgIdStr)) {
+      seq = this._msgIdToSeq.get(msgIdStr);
+    } else {
+      const byNtSeq = this.resolveNtSeq(msg.chatType, peerKey, ntMsgSeq);
+      if (byNtSeq > 0) {
+        seq = byNtSeq;
+        if (msgIdStr !== "" && msgIdStr !== "0" && !isRecordCopy) {
+          this._msgIdToSeq.set(msgIdStr, seq);
+          this._seqToMsgId.set(seq, msgIdStr);
+        }
+      } else {
+        seq = this.createSeq(isRecordCopy ? "" : msgIdStr);
+        if (isRecordCopy && msgIdStr !== "" && msgIdStr !== "0") {
+          this._msgIdToSeq.set(msgIdStr, seq);
+        }
+      }
+    }
+    this.recordNtSeq(msg.chatType, peerKey, ntMsgSeq, seq);
+
+    const segments = ntToMilky(msg.elements, msg, (uid) => this.getUinByUid(uid), this.mediaUrlBuilder);
+
+    // 回填引用回复段的 message_seq（优先匹配真实 msgId，其次匹配会话内 replayMsgSeq）
+    for (let s = 0; s < segments.length; s++) {
+      const seg = segments[s];
+      if (seg.type === "reply") {
+        const replyEl = msg.elements?.find((e) => e.replyElement)?.replyElement;
+        if (replyEl) {
+          const directRefId = ensureStr(replyEl.replayMsgId, "");
+          const recordRefId = ensureStr(replyEl.sourceMsgIdInRecords, "");
+          const replyNtSeq = ensureStr(replyEl.replayMsgSeq, "0");
+          let refSeq = 0;
+          if (directRefId !== "" && directRefId !== "0" && this._msgIdToSeq.has(directRefId)) {
+            refSeq = this._msgIdToSeq.get(directRefId);
+          } else {
+            refSeq = this.resolveNtSeq(msg.chatType, peerKey, replyNtSeq);
+            if (refSeq <= 0 && recordRefId !== "" && recordRefId !== "0" && this._msgIdToSeq.has(recordRefId)) {
+              refSeq = this._msgIdToSeq.get(recordRefId);
+            }
+          }
+          if (refSeq > 0) {
+            seg.data.message_seq = refSeq;
+          }
+        }
+      }
+    }
+
+    const msgTime = toIdNum(msg.msgTime) || Math.floor(Date.now() / 1000);
+    const senderId = toIdNum(resolvedSenderUin);
+
+    let incoming = null;
+    if (segments.length > 0) {
+      if (msg.chatType === 2) {
+        const groupIdNum = toIdNum(peerKey);
+        incoming = {
+          message_scene: "group",
+          peer_id: groupIdNum,
+          message_seq: seq,
+          sender_id: senderId,
+          time: msgTime,
+          segments,
+          group: this.buildGroupEntity(peerKey, msg.peerName),
+          group_member: this.buildGroupMemberEntity(
+            peerKey,
+            resolvedSenderUin,
+            msg.sendNickName,
+            msg.senderMemberName || msg.sendMemberName,
+            msgTime
+          ),
+        };
+      } else if (msg.chatType === 1) {
+        incoming = {
+          message_scene: "friend",
+          peer_id: toIdNum(peerKey),
+          message_seq: seq,
+          sender_id: senderId,
+          time: msgTime,
+          segments,
+          friend: this.buildFriendEntity(peerKey, msg.sendNickName),
+        };
+      } else if (msg.chatType === 100) {
+        incoming = {
+          message_scene: "temp",
+          peer_id: toIdNum(peerKey),
+          message_seq: seq,
+          sender_id: senderId,
+          time: msgTime,
+          segments,
+        };
+      }
+    }
+
+    const meta = {
+      ntMsgSeq,
+      senderUinStr: resolvedSenderUin || "0",
+    };
+    if (incoming) {
+      this.cacheMsg(seq, incoming, meta);
+    } else {
+      this._msgNtMeta.set(seq, meta);
+    }
+    return incoming;
   }
 
   _onRecvMsg(data) {
@@ -237,100 +439,21 @@ class MilkyEventTranslator {
       const msg = msgList[idx];
       if (!msg || !msg.msgId) continue;
 
-      if (msg.senderUin && msg.senderUid) {
-        this.recordUinUid(msg.senderUin, msg.senderUid);
-      }
-      if (msg.chatType === 2 && msg.senderUin && msg.peerUin) {
-        this.recordGroupMember(
-          msg.peerUin,
-          msg.senderUin,
-          msg.senderUid,
-          msg.sendNickName,
-          msg.senderMemberName || msg.sendMemberName,
-          msg.sendMemberRole
-        );
-      }
-      if (msg.chatType === 1 && msg.peerUid && msg.peerUin) {
-        this.recordUinUid(msg.peerUin, msg.peerUid);
-      }
-
       // 灰条提示消息单独转换为群管/戳一戳通知事件
       if (msg.msgType === 5) {
+        if (msg.senderUin && msg.senderUid) {
+          this.recordUinUid(msg.senderUin, msg.senderUid);
+        }
         events.push(...this._handleGrayTip(msg));
         continue;
       }
 
-      const seq = this.createSeq(msg.msgId);
-      const segments = ntToMilky(msg.elements, msg, (uid) => this.getUinByUid(uid), this.mediaUrlBuilder);
-
-      // 回填引用回复段的 message_seq
-      for (let s = 0; s < segments.length; s++) {
-        const seg = segments[s];
-        if (seg.type === "reply") {
-          const replyEl = msg.elements?.find((e) => e.replyElement)?.replyElement;
-          if (replyEl) {
-            const refId = ensureStr(replyEl.sourceMsgIdInRecords || replyEl.replayMsgId, "");
-            if (refId && this._msgIdToSeq.has(refId)) {
-              seg.data.message_seq = this._msgIdToSeq.get(refId);
-            }
-          }
-        }
+      const eventData = this.toIncomingMessage(msg);
+      if (eventData) {
+        events.push(this._makeEvent("message_receive", eventData));
       }
 
-      const msgTime = toIdNum(msg.msgTime) || Math.floor(Date.now() / 1000);
       const senderId = toIdNum(msg.senderUin);
-
-      // 若存在有效消息段则构造标准 Milky message_receive 事件（核心字段为 segments 与 sender_id）
-      if (segments.length > 0) {
-        let eventData = null;
-        if (msg.chatType === 2) {
-          const groupIdNum = toIdNum(msg.peerUin);
-          eventData = {
-            message_scene: "group",
-            peer_id: groupIdNum,
-            message_seq: seq,
-            sender_id: senderId,
-            time: msgTime,
-            segments,
-            group: this.buildGroupEntity(msg.peerUin, msg.peerName),
-            group_member: this.buildGroupMemberEntity(
-              msg.peerUin,
-              msg.senderUin,
-              msg.sendNickName,
-              msg.senderMemberName || msg.sendMemberName,
-              msgTime
-            ),
-          };
-        } else if (msg.chatType === 1) {
-          const peerUin = msg.peerUin || msg.senderUin;
-          eventData = {
-            message_scene: "friend",
-            peer_id: toIdNum(peerUin),
-            message_seq: seq,
-            sender_id: senderId,
-            time: msgTime,
-            segments,
-            friend: this.buildFriendEntity(peerUin, msg.sendNickName),
-          };
-        } else if (msg.chatType === 100) {
-          eventData = {
-            message_scene: "temp",
-            peer_id: toIdNum(msg.peerUin || msg.senderUin),
-            message_seq: seq,
-            sender_id: senderId,
-            time: msgTime,
-            segments,
-          };
-        }
-
-        if (eventData) {
-          this.cacheMsg(seq, eventData, {
-            ntMsgSeq: ensureStr(msg.msgSeq, "0"),
-            senderUinStr: toIdKey(msg.senderUin || "0"),
-          });
-          events.push(this._makeEvent("message_receive", eventData));
-        }
-      }
 
       // 群文件上传附加事件
       if (msg.chatType === 2) {
@@ -372,9 +495,19 @@ class MilkyEventTranslator {
 
     for (let i = 0; i < msgList.length; i++) {
       const msg = msgList[i];
-      if (!msg || !msg.recallTime || msg.recallTime === "0") continue;
+      if (!msg) continue;
+      if (!msg.recallTime || msg.recallTime === "0") {
+        // 发送消息落定后内核会回推正式 msgSeq，同步更新序号映射与消息缓存
+        if (msg.msgId && msg.msgId !== "0" && msg.msgSeq && msg.msgSeq !== "0") {
+          this.toIncomingMessage(msg);
+        }
+        continue;
+      }
 
       const seq = this._msgIdToSeq.get(ensureStr(msg.msgId, "")) || 0;
+      if (seq > 0) {
+        this._msgCache.delete(seq);
+      }
       const senderId = toIdNum(msg.senderUin);
       if (msg.chatType === 2) {
         events.push(this._makeEvent("message_recall", {
